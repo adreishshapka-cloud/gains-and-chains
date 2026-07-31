@@ -39,6 +39,7 @@ import { SettingsScreen } from '../ui/SettingsScreen';
 import { TopUpScreen } from '../ui/TopUpScreen';
 import { label } from '../ui/widgets';
 import { BeltStrip } from './BeltStrip';
+import { BigWinBanner } from './BigWinBanner';
 import { BUTTONS, INFO, MONEY, OIL_BAR, REELS_AT, STAGE_H, STAGE_W } from './layout';
 import { Mascot } from './Mascot';
 import { COLOR } from './palette';
@@ -47,7 +48,12 @@ import { AUTO_ROUNDS, BET_LEVELS, RTP_LABEL } from './rules';
 import { StickyOverlay } from './StickyOverlay';
 import { loadSymbolArt } from './symbolTextures';
 import { pause, timing, TURBO_SPEED } from './timing';
-import { WinPresenter } from './WinPresenter';
+import { TIERS, WinPresenter } from './WinPresenter';
+
+/** Порог полноэкранного объявления выигрыша, в ставках. Обычный показ над
+ *  барабанами есть у любого выигрыша; это — надстройка для по-настоящему
+ *  крупных, которые должны бросаться в глаза, а не тонуть в размере окна барабанов. */
+const BIG_WIN_THRESHOLD = 10;
 
 /**
  * Сцена и игровой цикл.
@@ -71,6 +77,7 @@ export class Game {
 
   private reels!: ReelSet;
   private win!: WinPresenter;
+  private bigWin!: BigWinBanner;
   private stickyOverlay!: StickyOverlay;
   private belt!: BeltStrip;
   private mascot!: Mascot;
@@ -194,6 +201,12 @@ export class Game {
     this.buildTexts();
     this.buildZones();
     this.buildBanner();
+
+    // Поверх обычного показа и модального ряда экранов: полноэкранный баннер
+    // не ждёт решения игрока, поэтому конкурировать с DoorScreen/PaytableScreen
+    // ему не за что, а показываться он обязан поверх абсолютно всего.
+    this.bigWin = new BigWinBanner();
+    this.app.stage.addChild(this.bigWin.view);
 
     this.rules = new PaytableScreen(STAGE_W, STAGE_H, RTP_LABEL);
     this.app.stage.addChild(this.rules.view);
@@ -604,6 +617,7 @@ export class Game {
           this.stickyOverlay.update(ev.spin.sticky, 'base');
           this.setText('oil', String(ev.spin.collect?.chains.length ?? 0));
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin);
+          await this.maybeShowBigWin(ev.spin.totalWin);
           break;
         }
 
@@ -642,6 +656,7 @@ export class Game {
           await this.reels.spin(ev.spin.grid);
           this.stickyOverlay.update(ev.spin.sticky, 'free');
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin, ev.mult);
+          await this.maybeShowBigWin(ev.spin.totalWin);
           if (ev.spin.totalWin === 0) await pause(170);
           break;
         }
@@ -653,7 +668,14 @@ export class Game {
         case 'freeEnd': {
           this.reels.setStrips(REELS_BASE);
           this.stickyOverlay.clear();
-          await this.showBanner(`ПОДЗЕМЕЛЬЕ ПРОЙДЕНО — ×${ev.won.toFixed(2)}`, 1800);
+          // Итог бонуса — не рядовой показ, а развязка всего раунда: баннер
+          // берёт весь экран, а не только окно барабанов, как обычный выигрыш.
+          await this.bigWin.show(
+            'ПОДЗЕМЕЛЬЕ ПРОЙДЕНО',
+            Math.round(ev.won * this.betCoins),
+            COLOR.neon,
+            2400,
+          );
           break;
         }
 
@@ -662,6 +684,18 @@ export class Game {
           break;
       }
     }
+  }
+
+  /**
+   * Полноэкранное объявление для по-настоящему крупного выигрыша одного спина.
+   * Обычный показ (WinPresenter) уже отыграл своё к этому моменту — это надстройка
+   * поверх него, а не замена: рядовые выигрыши в ней не нуждаются.
+   */
+  private async maybeShowBigWin(totalWin: number): Promise<void> {
+    if (totalWin < BIG_WIN_THRESHOLD) return;
+    const tier = TIERS.find((t) => totalWin >= t.min) ?? TIERS[TIERS.length - 1];
+    const coins = Math.round(totalWin * this.betCoins);
+    await this.bigWin.show(tier.title, coins, tier.color, tier.hold + 500);
   }
 
   private presentSpin(

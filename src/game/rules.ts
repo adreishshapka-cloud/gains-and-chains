@@ -9,7 +9,9 @@ import { LINES } from '../core/types';
  */
 
 /** Уровни ставки в монетах. Нижний равен числу линий — то есть монета на линию. */
-export const BET_LEVELS = [LINES, 40, 100, 200, 400, 1000] as const;
+export const BET_LEVELS = [
+  LINES, 40, 100, 200, 400, 1000, 2000, 5000, 10_000, 25_000, 50_000, 100_000,
+] as const;
 
 /** Сколько раундов запускает автоспин за одно нажатие. */
 export const AUTO_ROUNDS = 25;
