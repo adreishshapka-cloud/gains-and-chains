@@ -43,6 +43,7 @@ import { BUTTONS, INFO, MONEY, OIL_BAR, REELS_AT, STAGE_H, STAGE_W } from './lay
 import { Mascot } from './Mascot';
 import { COLOR } from './palette';
 import { ReelSet } from './ReelSet';
+import { AUTO_ROUNDS, BET_LEVELS, RTP_LABEL } from './rules';
 import { StickyOverlay } from './StickyOverlay';
 import { loadSymbolArt } from './symbolTextures';
 import { pause, timing, TURBO_SPEED } from './timing';
@@ -60,13 +61,7 @@ import { WinPresenter } from './WinPresenter';
  * у мат-модели и разыгрывает его во времени.
  */
 
-/** Уровни ставки в монетах. Нижний равен числу линий — монета на линию. */
-const BET_LEVELS = [20, 40, 100, 200, 400, 1000];
-
-const AUTO_ROUNDS = 25;
-const RTP_LABEL = '95.9%';
-
-/** Ниже этого баланса SPIN гаснет, а пополнение начинает мигать. */
+/** Ниже этого числа ставок пополнение начинает мигать. */
 const LOW_BALANCE = 1;
 
 export class Game {
@@ -252,31 +247,14 @@ export class Game {
     stepper.position.set(MONEY.stepper.x, MONEY.stepper.y);
     this.put('stepper', stepper);
 
-    const infoLine = (key: string, y: number) => {
-      const t = label('', 19, COLOR.paper);
-      t.position.set(INFO.valueX, y);
-      this.put(key, t);
-    };
-    infoLine('tokens', INFO.tokens);
-    infoLine('sticky', INFO.sticky);
-    infoLine('dry', INFO.dry);
-    infoLine('lines', INFO.lines);
-    infoLine('betCoins', INFO.betCoins);
-    infoLine('buyCoins', INFO.buyCoins);
+    this.buildInfoPanel();
 
-    // Таблица выплат в правой панели — семь строк, подписи уже на фоне.
-    for (const [i, y] of INFO.payRows.entries()) {
-      const t = label('', 18, COLOR.paper);
-      t.position.set(INFO.valueX, y);
-      this.put(`pay${i}`, t);
-    }
-
-    // Стоимость покупки на кнопке SKIP LEG DAY. На макете там было «80 x»,
-    // но цена в мат-модели другая, и зависит она от ставки — пишем своё.
-    const buyCost = label('', 21, COLOR.gold);
-    buyCost.anchor.set(0.5, 0.5);
-    buyCost.position.set(873, 757);
-    this.put('buyCost', buyCost);
+    // Надпись «МЕНЮ» на кнопке, где на макете было «ПРАВИЛА».
+    const menu = label('МЕНЮ', 21, COLOR.paper);
+    menu.anchor.set(0.5, 0.5);
+    menu.position.set(1236, 740);
+    this.put('menu', menu);
+    this.setText('menu', 'МЕНЮ');
 
     // Счётчик цепей на экране — в полосе OIL UP.
     const oil = label('', 22, COLOR.gold);
@@ -290,6 +268,54 @@ export class Game {
     this.app.stage.addChild(this.statusText);
   }
 
+  /**
+   * Правая панель целиком: подписи, значения и разделители.
+   * С макета её нутро стёрто — так обе колонки гарантированно выровнены.
+   */
+  private buildInfoPanel(): void {
+    const rules = new Graphics();
+    for (const y of INFO.rules) {
+      rules.moveTo(INFO.labelX, y).lineTo(INFO.valueRight, y);
+    }
+    rules.stroke({ color: 0x6b4429, width: 2, alpha: 0.8 });
+    this.app.stage.addChild(rules);
+
+    const row = (key: string, top: number, index: number, caption: string, color: number) => {
+      const y = top + index * INFO.step;
+
+      const name = label(caption, 18, color);
+      name.position.set(INFO.labelX, y);
+      this.app.stage.addChild(name);
+
+      const value = label('', 18, COLOR.paper);
+      value.anchor.set(1, 0);
+      value.position.set(INFO.valueRight, y);
+      this.put(key, value);
+    };
+
+    row('tokens', INFO.statsTop, 0, 'Жетоны', 0x9a8aaa);
+    row('sticky', INFO.statsTop, 1, 'Липких ♂', 0x9a8aaa);
+    row('dry', INFO.statsTop, 2, 'Сухая серия', 0x9a8aaa);
+
+    row('lines', INFO.betTop, 0, 'Линий', 0x9a8aaa);
+    row('betCoins', INFO.betTop, 1, 'Ставка', 0x9a8aaa);
+    row('buyCoins', INFO.betTop, 2, 'Покупка', 0x9a8aaa);
+
+    // Цвета повторяют раскладку макета: старшие символы тёплые, младшие холодные.
+    const pays: [string, number][] = [
+      ['DUKE', 0xff6b9a],
+      ['CHAMPION', 0xd4453a],
+      ['REF', 0x4a9fff],
+      ['ROOKIE', 0x7a6bff],
+      ['FIST', 0xff9a3a],
+      ['CHAIN', COLOR.gold],
+      ['WILD', COLOR.gold],
+    ];
+    for (const [i, [caption, color]] of pays.entries()) {
+      row(`pay${i}`, INFO.payTop, i, caption, color);
+    }
+  }
+
   private buildZones(): void {
     const add = (key: string, onTap: () => void, accent?: number) => {
       const zone = new HotZone(BUTTONS[key], onTap, accent);
@@ -301,6 +327,7 @@ export class Game {
     add('buy', () => void this.spin(true), COLOR.neon);
     add('turbo', () => this.toggleTurbo(), COLOR.cyan);
     add('auto', () => this.toggleAuto(), COLOR.cyan);
+    add('menu', () => this.openSettings(), COLOR.cyan);
     add('betDown', () => this.stepBet(-1));
     add('betUp', () => this.stepBet(1));
     add('topUp', () => void this.openTopUp(), COLOR.gold);
@@ -671,9 +698,9 @@ export class Game {
     this.setText('sticky', String(this.state.sticky.length));
     this.setText('dry', String(this.state.belt.dry));
     this.setText('lines', String(LINES));
-    this.setText('betCoins', `${this.betCoins.toLocaleString('ru-RU')} монет`);
-    this.setText('buyCoins', `${(BONUS_BUY_COST * this.betCoins).toLocaleString('ru-RU')} монет`);
-    this.setText('buyCost', `${BONUS_BUY_COST} × ставки`);
+    // Без слова «монет»: с ним длинные суммы упирались в край панели.
+    this.setText('betCoins', this.betCoins.toLocaleString('ru-RU'));
+    this.setText('buyCoins', (BONUS_BUY_COST * this.betCoins).toLocaleString('ru-RU'));
 
     // Строки таблицы выплат идут в том же порядке, что подписи на фоне.
     const ladder = STICKY_MULT_LADDER;

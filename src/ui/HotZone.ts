@@ -28,15 +28,26 @@ export class HotZone {
     this.view.pivot.set(w / 2, h / 2);
     this.view.position.set(x + w / 2, y + h / 2);
 
-    // Свечение рисуется несколькими вложенными рамками с падающей прозрачностью:
-    // дешёвый способ получить мягкий ореол без фильтров, которые на слабых
-    // машинах стоят заметно дороже.
-    for (let i = 4; i >= 1; i--) {
+    // Свечение живёт по бокам кнопки и гаснет наружу. Заливка всей площади,
+    // которая была здесь раньше, читалась как «выделено курсором» — будто
+    // кнопку не подсветили, а выделили мышью, как строку текста.
+    //
+    // Градиент набирается полосами с падающей прозрачностью: дешевле фильтров,
+    // которые на слабой машине заметно проседают по кадрам.
+    const bands = 9;
+    const reach = 16;
+    const inset = Math.round(h * 0.16); // не доводим до самых углов — так мягче
+    for (let i = bands; i >= 1; i--) {
+      const t = i / bands;
+      const spread = reach * t;
+      const alpha = 0.3 * (1 - t) ** 1.6;
       this.glow
-        .roundRect(-i * 3, -i * 3, w + i * 6, h + i * 6, 10 + i * 2)
-        .stroke({ color: accent, width: 3, alpha: 0.16 });
+        .rect(-spread, inset, spread, h - inset * 2)
+        .rect(w, inset, spread, h - inset * 2)
+        .fill({ color: accent, alpha });
     }
-    this.glow.roundRect(0, 0, w, h, 8).fill({ color: accent, alpha: 0.14 });
+    // Тонкий контур привязывает свечение к самой кнопке, иначе оно висит рядом.
+    this.glow.roundRect(0.5, 0.5, w - 1, h - 1, 8).stroke({ color: accent, width: 2, alpha: 0.5 });
     this.glow.alpha = 0;
     this.view.addChild(this.glow);
 
@@ -71,9 +82,15 @@ export class HotZone {
   }
 
   private refresh(): void {
-    const target = !this.enabled ? 0 : this.active ? 1 : this.hovered ? 0.55 : 0;
+    const target = !this.enabled ? 0 : this.active ? 1 : this.hovered ? 0.6 : 0;
     gsap.killTweensOf(this.glow);
-    gsap.to(this.glow, { alpha: target, duration: dur(0.18) });
+    // Разгорается медленнее, чем гаснет: так наведение читается как отклик,
+    // а не как мигание при каждом проносе курсора над панелью.
+    gsap.to(this.glow, {
+      alpha: target,
+      duration: dur(target > this.glow.alpha ? 0.28 : 0.16),
+      ease: 'sine.out',
+    });
   }
 
   setEnabled(on: boolean): void {

@@ -1,4 +1,5 @@
 import { Container, Graphics, Rectangle, Text } from 'pixi.js';
+import { AUTO_ROUNDS } from '../game/rules';
 import { COLOR } from '../game/palette';
 import { rankFor, type Stats } from '../state/save';
 import { Button, label } from './widgets';
@@ -39,9 +40,9 @@ export class SettingsScreen {
     this.view.addChild(shade);
 
     const panelW = 760;
-    // Высота считается от содержимого: девять строк статистики плюс шапка
-    // и ряд кнопок. При 560 последняя строка уезжала под кнопку сброса.
-    const panelH = 640;
+    // Высота считается от содержимого: два раздела с пояснениями, девять строк
+    // статистики и ряд кнопок. При 560 последняя строка уезжала под кнопку сброса.
+    const panelH = 726;
     const panel = new Container();
     panel.position.set((width - panelW) / 2, (height - panelH) / 2);
     panel.eventMode = 'static';
@@ -71,12 +72,28 @@ export class SettingsScreen {
     turboNote.position.set(246, 110);
     panel.addChild(turboNote);
 
+    // Про автоспин игрок иначе не узнает: кнопка «АВТО» не объясняет,
+    // сколько раундов она запускает и как её остановить.
+    const autoTitle = label('АВТО', 22, COLOR.gold);
+    autoTitle.position.set(36, 168);
+    panel.addChild(autoTitle);
+
+    const autoNote = label(
+      `Крутит ${AUTO_ROUNDS} раундов подряд. Повторное нажатие останавливает\n` +
+        'после текущего раунда. Автоспин сам встанет, если кончатся монеты.',
+      17,
+      0x9a8aaa,
+      { lineHeight: 24 },
+    );
+    autoNote.position.set(36, 198);
+    panel.addChild(autoNote);
+
     const statsTitle = label('ТВОЯ СТАТИСТИКА', 22, COLOR.cyan);
-    statsTitle.position.set(36, 180);
+    statsTitle.position.set(36, 262);
     panel.addChild(statsTitle);
 
     this.statsText = label('', 19, COLOR.paper, { lineHeight: 30 });
-    this.statsText.position.set(36, 220);
+    this.statsText.position.set(36, 302);
     panel.addChild(this.statsText);
 
     this.resetButton = new Button({
