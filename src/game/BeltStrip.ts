@@ -21,15 +21,27 @@ export class BeltStrip {
   constructor() {
     for (const [x, y, w, h] of BELT_SLOTS) {
       const light = new Graphics();
-      // Несколько рамок с падающей прозрачностью дают мягкий ореол
-      // без фильтров, которые заметно дороже на слабых машинах.
-      for (let i = 3; i >= 1; i--) {
-        light
-          .roundRect(-i * 3, -i * 3, w + i * 6, h + i * 6, 8 + i * 2)
-          .stroke({ color: COLOR.gold, width: 3, alpha: 0.18 });
+
+      // Свечение только по контуру и наружу. Заливка всего слота, которая
+      // стояла здесь раньше, закрашивала нарисованный жетон жёлтым пятном —
+      // сам жетон переставало быть видно, а подсветка выглядела грубой.
+      const bands = 7;
+      const reach = 9;
+      for (let i = bands; i >= 1; i--) {
+        const t = i / bands;
+        const spread = reach * t;
+        light.roundRect(-spread, -spread, w + spread * 2, h + spread * 2, 7 + spread).stroke({
+          color: COLOR.gold,
+          width: 2,
+          alpha: 0.16 * (1 - t) ** 1.2,
+        });
       }
-      light.roundRect(0, 0, w, h, 7).fill({ color: COLOR.gold, alpha: 0.3 });
-      light.position.set(x, y);
+      light.roundRect(0.5, 0.5, w - 1, h - 1, 6).stroke({
+        color: COLOR.gold,
+        width: 2,
+        alpha: 0.85,
+      });
+
       light.pivot.set(w / 2, h / 2);
       light.position.set(x + w / 2, y + h / 2);
       light.alpha = 0;
