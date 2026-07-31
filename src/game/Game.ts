@@ -23,6 +23,7 @@ import {
 } from '../core/types';
 import backgroundUrl from '../assets/ui/background.png';
 import dukeUrl from '../assets/ui/duke-stand.png';
+import coinUrl from '../assets/symbols/coin.png';
 import {
   clearSave,
   defaultSave,
@@ -78,6 +79,9 @@ export class Game {
   private reels!: ReelSet;
   private win!: WinPresenter;
   private bigWin!: BigWinBanner;
+  /** Иконка монеты из исходного макета — стоит рядом со стоимостью покупки. */
+  private coinTexture!: Texture;
+  private coinIcon!: Sprite;
   private stickyOverlay!: StickyOverlay;
   private belt!: BeltStrip;
   private mascot!: Mascot;
@@ -171,10 +175,13 @@ export class Game {
     this.fitToWindow();
     window.addEventListener('resize', () => this.fitToWindow());
 
-    const [background, dukeTexture] = await Promise.all([
+    const [background, dukeTexture, coinTexture] = await Promise.all([
       Assets.load<Texture>(backgroundUrl),
       Assets.load<Texture>(dukeUrl),
+      Assets.load<Texture>(coinUrl),
     ]);
+    coinTexture.source.scaleMode = 'nearest';
+    this.coinTexture = coinTexture;
     const art = await loadSymbolArt(this.app.renderer);
 
     const bg = new Sprite(background);
@@ -318,6 +325,16 @@ export class Game {
     row('lines', INFO.betTop, 0, 'Линий', 0x9a8aaa);
     row('betCoins', INFO.betTop, 1, 'Ставка', 0x9a8aaa);
     row('buyCoins', INFO.betTop, 2, 'Покупка', 0x9a8aaa);
+
+    // Монета из исходного макета: там она стояла рядом с ценой покупки бонуса
+    // («80 x 🪙»). Число подрастает с ростом ставки, поэтому монета не прибита
+    // гвоздями — она едет вслед за левым краем текста в setText().
+    this.coinIcon = new Sprite(this.coinTexture);
+    this.coinIcon.anchor.set(1, 0.15);
+    this.coinIcon.width = 22;
+    this.coinIcon.height = 22;
+    this.coinIcon.y = INFO.betTop + 2 * INFO.step;
+    this.app.stage.addChild(this.coinIcon);
 
     // Цвета повторяют раскладку макета: старшие символы тёплые, младшие холодные.
     const pays: [string, number][] = [
@@ -728,7 +745,15 @@ export class Game {
 
   private setText(key: string, value: string): void {
     const t = this.texts.get(key);
-    if (t) t.text = value;
+    if (!t) return;
+    t.text = value;
+
+    if (key === 'buyCoins') {
+      // Число право-выровнено по INFO.valueRight и меняет ширину с каждой
+      // цифрой — монета цепляется за его левый край, а не стоит в фиксированной
+      // точке, иначе на пятизначных суммах она бы наехала на текст.
+      this.coinIcon.x = t.x - t.width - 6;
+    }
   }
 
   private setStatus(text: string): void {
