@@ -37,7 +37,7 @@ export interface SaveData {
   sticky: StickyWild[];
 }
 
-export const START_BALANCE = 20_000;
+export const START_BALANCE = 5_000;
 
 export function emptyStats(): Stats {
   return {
