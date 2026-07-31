@@ -3,7 +3,7 @@ import { Container, Graphics, Rectangle } from 'pixi.js';
 import { DOORS, type Door, type DoorId } from '../core/features/freeSpins';
 import { COLOR } from '../game/palette';
 import { dur } from '../game/timing';
-import { label } from './widgets';
+import { Button, label } from './widgets';
 
 /**
  * Выбор двери перед фриспинами.
@@ -28,8 +28,11 @@ const CARD_COLOR: Record<DoorId, number> = {
 export class DoorScreen {
   readonly view = new Container();
 
-  private resolve: ((id: DoorId) => void) | null = null;
+  private resolve: ((id: DoorId | null) => void) | null = null;
   private readonly cards: Container[] = [];
+  private readonly cancelButton: Container;
+  /** Можно ли уйти с экрана без выбора. */
+  private cancellable = false;
 
   constructor(width: number, height: number) {
     this.view.visible = false;
@@ -39,6 +42,7 @@ export class DoorScreen {
     shade.eventMode = 'static';
     // Без hit-области клики проваливаются на панель управления под экраном.
     shade.hitArea = new Rectangle(0, 0, width, height);
+    shade.on('pointertap', () => this.cancel());
     this.view.addChild(shade);
 
     const title = label('ВЫБЕРИ ДВЕРЬ', 46, COLOR.gold);
@@ -60,6 +64,32 @@ export class DoorScreen {
       this.cards.push(card);
       this.view.addChild(card);
     }
+
+    // Отказ доступен только при покупке бонуса: там игрок ещё ничего не потратил.
+    // Когда дверь выпала по scatter'ам, раунд уже оплачен обычной ставкой,
+    // и уйти с экрана значило бы просто потерять его.
+    this.cancelButton = new Button({
+      text: 'ПЕРЕДУМАЛ',
+      width: 240,
+      height: 54,
+      fontSize: 21,
+      onTap: () => this.cancel(),
+    }).view;
+    this.cancelButton.position.set((width - 240) / 2, 210 + CARD_H + 46);
+    this.view.addChild(this.cancelButton);
+  }
+
+  private cancel(): void {
+    if (!this.cancellable) return;
+    const done = this.resolve;
+    this.resolve = null;
+    this.view.visible = false;
+    done?.(null);
+  }
+
+  /** Закрыть по Escape — работает только там, где отказ вообще разрешён. */
+  requestClose(): void {
+    this.cancel();
   }
 
   private buildCard(door: Door): Container {
@@ -139,8 +169,16 @@ export class DoorScreen {
     return this.view.visible;
   }
 
-  /** Показывает экран и ждёт выбора. Пока игрок не решит, раунд не продолжится. */
-  choose(): Promise<DoorId> {
+  /**
+   * Показывает экран и ждёт решения.
+   * @param cancellable разрешён ли отказ. При покупке бонуса — да: игрок ещё
+   *        ничего не потратил. Когда дверь выпала по scatter'ам — нет: раунд
+   *        уже оплачен ставкой, и уход с экрана означал бы потерю денег.
+   * @returns выбранная дверь либо null, если игрок передумал.
+   */
+  choose(cancellable = false): Promise<DoorId | null> {
+    this.cancellable = cancellable;
+    this.cancelButton.visible = cancellable;
     this.view.visible = true;
     for (const [i, holder] of this.cards.entries()) {
       const card = holder.children[0] as Container;
@@ -163,5 +201,10 @@ export class DoorScreen {
   /** Аварийный выход: выбрать за игрока, если экран нужно закрыть принудительно. */
   forcePick(id: DoorId): void {
     if (this.resolve) this.pick(id);
+  }
+
+  /** Разрешён ли сейчас отказ — по этому Game решает, реагировать ли на Escape. */
+  get canCancel(): boolean {
+    return this.cancellable;
   }
 }

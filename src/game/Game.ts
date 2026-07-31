@@ -1,6 +1,6 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { BeltReward } from '../core/features/beltCollection';
-import { BONUS_BUY_COST } from '../core/features/freeSpins';
+import { BONUS_BUY_COST, DOORS, type DoorId } from '../core/features/freeSpins';
 import type { RoundEvent } from '../core/events';
 import { CHAIN_VALUES, PAYTABLE } from '../core/paytable';
 import { REELS_BASE, REELS_FREE } from '../core/reels';
@@ -250,9 +250,14 @@ export class Game {
     this.buildInfoPanel();
 
     // Надпись «МЕНЮ» на кнопке, где на макете было «ПРАВИЛА».
-    const menu = label('МЕНЮ', 21, COLOR.paper);
+    // Обводка и цвет повторяют соседние «ТУРБО» и «АВТО» — иначе одна кнопка
+    // в ряду выглядит чужой.
+    const menu = label('МЕНЮ', 25, COLOR.paper, {
+      stroke: { color: 0x2a1a10, width: 5 },
+      letterSpacing: 2,
+    });
     menu.anchor.set(0.5, 0.5);
-    menu.position.set(1236, 740);
+    menu.position.set(1236, 741);
     this.put('menu', menu);
     this.setText('menu', 'МЕНЮ');
 
@@ -376,6 +381,7 @@ export class Game {
     if (e.code === 'Escape') {
       if (this.rules.isOpen) this.rules.hide();
       if (this.settings.isOpen) this.settings.hide();
+      if (this.doors.isOpen && this.doors.canCancel) this.doors.requestClose();
       return;
     }
     if (this.modalOpen) return;
@@ -505,6 +511,22 @@ export class Game {
       return;
     }
 
+    // При покупке дверь выбирается ДО списания: передумать должно быть бесплатно.
+    // Если спросить после, отказ означал бы потерю уже снятых монет — а отказаться
+    // игрок хочет как раз тогда, когда увидел цену.
+    let boughtDoor: DoorId | null = null;
+    if (buy) {
+      this.busy = true;
+      this.setInteractive(false);
+      boughtDoor = await this.doors.choose(true);
+      this.busy = false;
+      this.setInteractive(true);
+      if (boughtDoor === null) {
+        this.setStatus('Передумал — монеты на месте.');
+        return;
+      }
+    }
+
     this.busy = true;
     this.setInteractive(false);
     this.counterCoins = 0;
@@ -529,7 +551,9 @@ export class Game {
     }
 
     if (enterFree) {
-      const door = await this.doors.choose();
+      // Дверь либо уже выбрана при покупке, либо спрашивается сейчас — и тогда
+      // отказаться нельзя: раунд оплачен обычной ставкой.
+      const door = boughtDoor ?? (await this.doors.choose(false)) ?? DOORS[1].id;
       const freeLog: RoundEvent[] = [];
       freeSpinsPlayed = playFree({
         rng: this.rng,
