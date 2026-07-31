@@ -1,0 +1,168 @@
+"""
+Готовит макет к использованию как фон игры.
+
+    python tools/prep_background.py фон.png
+
+Две задачи:
+
+1. Стереть с макета нарисованные значения — баланс, ставку, выигрыш, счётчики.
+   Они статичны, а в игре меняются; движок будет писать поверх свои, и старое
+   число просвечивало бы насквозь. Заплатки берутся из чистого куска той же
+   панели, поэтому шов не виден.
+
+2. Вырезать фигуру DUKE в отдельный спрайт, чтобы её можно было анимировать.
+   Оставленная на фоне, она намертво приколочена к стене.
+"""
+
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageFilter
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT_DIR = ROOT / "src" / "assets" / "ui"
+
+# Куски макета, которые надо стереть: (x1, y1, x2, y2, размытие).
+# Координаты сняты с координатной сетки — см. tools/grid_overlay.py.
+#
+# Размытие сглаживает шов на однородных тёмных панелях, но на цветной или
+# текстурной кнопке оставляет мутное пятно — там его отключают нулём.
+ERASE = [
+    (50, 734, 196, 780, 3),      # значение баланса
+    (222, 734, 330, 780, 3),     # значение ставки
+    (366, 734, 476, 780, 3),     # значение выигрыша
+    (596, 716, 706, 760, 3),     # число в степпере ставки
+    (830, 740, 916, 774, 0),     # «80 x» на фиолетовой кнопке покупки
+    # Левые границы прижаты вплотную к колонке значений: сдвинешь левее —
+    # срежет подписи «Сумма серии» и «Покупка».
+    (1313, 196, 1428, 270, 3),   # жетоны / лишних / сумма серии
+    (1296, 294, 1428, 366, 3),   # линии / ставка / покупка
+    (1316, 384, 1428, 558, 3),   # числа в таблице выплат — они не наши
+    (975, 866, 1060, 898, 3),    # «0 / 10» в OIL UP
+    # Кнопка «ПРАВИЛА» дублирует «?» из нижнего ряда: правила открывались
+    # из трёх мест сразу. Убираем её с макета целиком, а не просто снимаем
+    # обработчик — иначе на панели осталась бы мёртвая кнопка.
+    (1172, 702, 1302, 778, 2),
+]
+
+# Фигура маскота. Снизу обрезано по ногам, чтобы не захватить тумбу с маслом,
+# справа — чтобы не зацепить рамку барабанов.
+DUKE_BOX = (118, 190, 448, 700)
+
+# Ширина растушёвки края спрайта. Чем больше, тем незаметнее шов со стеной,
+# но тем сильнее «съедается» фигура у границы рамки.
+DUKE_FEATHER = 46
+
+# Табличка «DUKE / DUNGEON OWNER» на стене, в координатах вырезанного куска.
+# Она прибита к стене и дышать вместе с фигурой не должна — иначе буквы
+# «плывут» на каждом вдохе. Вырезаем её из спрайта: на фоне она остаётся.
+DUKE_SIGN = (0, 0, 96, 72)
+DUKE_SIGN_FEATHER = 14
+
+
+def patch_region(img: Image.Image, box, blur: int = 3):
+    """
+    Затирает область цветом её собственных краёв.
+    Берём рамку в пару пикселей вокруг, усредняем и заливаем с лёгким размытием —
+    на тёмной панели шва не видно, а возиться с текстурой ради этого не стоит.
+    """
+    x1, y1, x2, y2 = box[:4]
+    px = img.load()
+    w, h = img.size
+
+    samples = []
+    for x in range(max(0, x1 - 3), min(w, x2 + 3)):
+        for y in (max(0, y1 - 3), min(h - 1, y2 + 2)):
+            samples.append(px[x, y])
+    for y in range(max(0, y1 - 3), min(h, y2 + 3)):
+        for x in (max(0, x1 - 3), min(w - 1, x2 + 2)):
+            samples.append(px[x, y])
+
+    if not samples:
+        return
+    avg = tuple(sum(c[i] for c in samples) // len(samples) for i in range(3))
+
+    fill = Image.new("RGB", (x2 - x1, y2 - y1), avg)
+    img.paste(fill, (x1, y1))
+
+    if blur <= 0:
+        return
+
+    # Размываем границу заплатки, чтобы не читался прямоугольник.
+    pad = 6
+    around = (max(0, x1 - pad), max(0, y1 - pad), min(w, x2 + pad), min(h, y2 + pad))
+    blurred = img.crop(around).filter(ImageFilter.GaussianBlur(blur))
+    img.paste(blurred, around)
+
+
+def cut_duke(sheet: Image.Image) -> Image.Image:
+    """
+    Берёт прямоугольный кусок стены вместе с фигурой и растушёвывает края.
+
+    Отделить силуэт по цвету не выходит: чёрная кожа жилетки и тёмные штаны
+    попадают ровно в тот же диапазон, что и стена за спиной, и любая заливка
+    проходит сквозь фигуру насквозь. Поэтому вырезаем прямоугольник целиком.
+
+    Спрайт кладётся точно на своё место поверх фона и анимируется только
+    увеличением — значит он всегда перекрывает оригинал, и двойного контура
+    не возникает. Мягкие края прячут шов со стеной, которая едет вместе с ним.
+    """
+    crop = sheet.crop(DUKE_BOX).convert("RGBA")
+    w, h = crop.size
+    px = crop.load()
+
+    sx1, sy1, sx2, sy2 = DUKE_SIGN
+
+    for x in range(w):
+        # Растушёвка по вертикали считается один раз на столбец.
+        fx = min(1.0, min(x, w - 1 - x) / DUKE_FEATHER)
+        for y in range(h):
+            fy = min(1.0, min(y, h - 1 - y) / DUKE_FEATHER)
+            edge = min(fx, fy)
+
+            # Вырез под табличку: ноль внутри, плавный подъём наружу.
+            if x < sx2 + DUKE_SIGN_FEATHER and y < sy2 + DUKE_SIGN_FEATHER:
+                dx = (x - sx2) / DUKE_SIGN_FEATHER
+                dy = (y - sy2) / DUKE_SIGN_FEATHER
+                sign = max(0.0, min(1.0, max(dx, dy)))
+                if x >= sx1 and y >= sy1:
+                    edge = min(edge, sign)
+
+            if edge >= 1.0:
+                continue
+            p = px[x, y]
+            px[x, y] = (p[0], p[1], p[2], int(255 * edge * edge))
+
+    return crop
+
+
+def main(src: Path):
+    sheet = Image.open(src).convert("RGB")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    duke = cut_duke(sheet)
+    duke.save(OUT_DIR / "duke-stand.png")
+    print(f"  duke-stand.png  {duke.size[0]}×{duke.size[1]} на месте {DUKE_BOX[0]},{DUKE_BOX[1]}")
+
+    # Координаты нужны сцене, чтобы положить спрайт ровно поверх оригинала.
+    import json
+
+    (OUT_DIR / "layout.json").write_text(
+        json.dumps(
+            {"background": list(sheet.size), "dukeBox": list(DUKE_BOX)},
+            indent=2,
+        ),
+        encoding="utf8",
+    )
+
+    for region in ERASE:
+        patch_region(sheet, region[:4], region[4] if len(region) > 4 else 3)
+
+    sheet.save(OUT_DIR / "background.png")
+    print(f"  background.png  {sheet.size[0]}×{sheet.size[1]}, стёрто участков: {len(ERASE)}")
+    print(f"\n  Готово: {OUT_DIR}")
+
+
+if __name__ == "__main__":
+    src = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "фон.png"
+    main(src if src.is_absolute() else ROOT / src)
