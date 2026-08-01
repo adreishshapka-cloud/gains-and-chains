@@ -32,6 +32,8 @@ export interface SaveData {
   balance: number;
   betIndex: number;
   turbo: boolean;
+  /** Фоновая музыка включена. Кнопка «нота» в нижнем ряду. */
+  music: boolean;
   stats: Stats;
   belt: { tokens: number; dry: number };
   sticky: StickyWild[];
@@ -58,6 +60,7 @@ export function defaultSave(): SaveData {
     balance: START_BALANCE,
     betIndex: 0,
     turbo: false,
+    music: true,
     stats: emptyStats(),
     belt: { tokens: 0, dry: 0 },
     sticky: [],
@@ -79,6 +82,7 @@ export function loadSave(): SaveData {
       balance: typeof parsed.balance === 'number' ? parsed.balance : base.balance,
       betIndex: typeof parsed.betIndex === 'number' ? parsed.betIndex : base.betIndex,
       turbo: typeof parsed.turbo === 'boolean' ? parsed.turbo : base.turbo,
+      music: typeof parsed.music === 'boolean' ? parsed.music : base.music,
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
       belt: { ...base.belt, ...(parsed.belt ?? {}) },
       sticky: Array.isArray(parsed.sticky) ? parsed.sticky : [],

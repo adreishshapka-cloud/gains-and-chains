@@ -1,4 +1,13 @@
-import { Application, Assets, Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
+import {
+  Application,
+  Assets,
+  Container,
+  Graphics,
+  Rectangle,
+  Sprite,
+  Text,
+  Texture,
+} from 'pixi.js';
 import type { BeltReward } from '../core/features/beltCollection';
 import { BONUS_BUY_COST, DOORS, type DoorId } from '../core/features/freeSpins';
 import type { RoundEvent } from '../core/events';
@@ -22,7 +31,15 @@ import {
   type LineWin,
 } from '../core/types';
 import backgroundUrl from '../assets/ui/background.png';
-import dukeUrl from '../assets/ui/duke-stand.png';
+import vanUrl from '../assets/ui/van-stand.png';
+import logoUrl from '../assets/ui/logo.png';
+import signUrl from '../assets/ui/sign-van.png';
+import tableUrl from '../assets/ui/table-still.png';
+import ticketPanelUrl from '../assets/ui/ticket-panel.png';
+import skipUrl from '../assets/ui/skip-button.png';
+import turboUrl from '../assets/ui/turbo-button.png';
+import autoUrl from '../assets/ui/auto-button.png';
+import menuUrl from '../assets/ui/menu-button.png';
 import coinUrl from '../assets/symbols/coin.png';
 import {
   clearSave,
@@ -41,9 +58,27 @@ import { TopUpScreen } from '../ui/TopUpScreen';
 import { label } from '../ui/widgets';
 import { BeltStrip } from './BeltStrip';
 import { BigWinBanner } from './BigWinBanner';
-import { BUTTONS, INFO, MONEY, OIL_BAR, REELS_AT, STAGE_H, STAGE_W } from './layout';
+import {
+  BUTTONS,
+  FIST_LABEL,
+  INFO,
+  LOGO_AT,
+  TICKET_PANEL,
+  ROW_BUTTONS,
+  MONEY,
+  OIL_BAR,
+  PANEL_TOP,
+  REELS_AT,
+  SIGN_AT,
+  TABLE_AT,
+  STAGE_H,
+  STAGE_W,
+  VAN_AT,
+} from './layout';
 import { Mascot } from './Mascot';
+import { music } from './music';
 import { COLOR } from './palette';
+import { ReelDividers } from './ReelDividers';
 import { ReelSet } from './ReelSet';
 import { AUTO_ROUNDS, BET_LEVELS, RTP_LABEL } from './rules';
 import { StickyOverlay } from './StickyOverlay';
@@ -175,10 +210,30 @@ export class Game {
     this.fitToWindow();
     window.addEventListener('resize', () => this.fitToWindow());
 
-    const [background, dukeTexture, coinTexture] = await Promise.all([
+    const [
+      background,
+      vanTexture,
+      coinTexture,
+      logoTexture,
+      signTexture,
+      tableTexture,
+      ticketTexture,
+      skipTexture,
+      turboTexture,
+      autoTexture,
+      menuTexture,
+    ] = await Promise.all([
       Assets.load<Texture>(backgroundUrl),
-      Assets.load<Texture>(dukeUrl),
+      Assets.load<Texture>(vanUrl),
       Assets.load<Texture>(coinUrl),
+      Assets.load<Texture>(logoUrl),
+      Assets.load<Texture>(signUrl),
+      Assets.load<Texture>(tableUrl),
+      Assets.load<Texture>(ticketPanelUrl),
+      Assets.load<Texture>(skipUrl),
+      Assets.load<Texture>(turboUrl),
+      Assets.load<Texture>(autoUrl),
+      Assets.load<Texture>(menuUrl),
     ]);
     coinTexture.source.scaleMode = 'nearest';
     this.coinTexture = coinTexture;
@@ -189,8 +244,52 @@ export class Game {
     bg.height = STAGE_H;
     this.app.stage.addChild(bg);
 
-    this.mascot = new Mascot(dukeTexture);
+    // Новый логотип ложится ровно на старый, запечённый в фон.
+    //
+    // Это одна и та же картинка, просто выгруженная отдельным файлом, поэтому
+    // прямоугольник взят по чернилам старой надписи (обмерено: 13,23 411x101),
+    // а не «на глаз покрупнее». Буквы совпадают одна в одну, и старая надпись
+    // не просвечивает в просветах — а именно там она и двоилась, когда логотип
+    // клали произвольного размера. Стирать старую с фона не пришлось: через
+    // неё проходят цепи, и вместе с буквами они повисали в воздухе.
+    const logo = new Sprite(logoTexture);
+    logo.position.set(LOGO_AT.x, LOGO_AT.y);
+    logo.width = LOGO_AT.w;
+    logo.height = (LOGO_AT.w / logoTexture.width) * logoTexture.height;
+    this.app.stage.addChild(logo);
+
+    // Табличка на стене — до маскота: она висит за ним, и если по кадру они
+    // соприкоснутся, перекрывать должен он, а не она.
+    const sign = new Sprite(signTexture);
+    sign.position.set(SIGN_AT.x, SIGN_AT.y);
+    sign.width = SIGN_AT.w;
+    sign.height = (SIGN_AT.w / signTexture.width) * signTexture.height;
+    this.app.stage.addChild(sign);
+
+    // Посуда на тумбе — тоже до маскота: он стоит перед тумбой и заслоняет
+    // её краем, как и было на макете.
+    const still = new Sprite(tableTexture);
+    still.width = TABLE_AT.w;
+    still.height = (TABLE_AT.w / tableTexture.width) * tableTexture.height;
+    still.position.set(TABLE_AT.x, TABLE_AT.y - still.height);
+    this.app.stage.addChild(still);
+
+    this.mascot = new Mascot(vanTexture, VAN_AT);
     this.app.stage.addChild(this.mascot.view);
+
+    // Нижняя часть макета — панель баланса и ряд иконок — рисуется ВТОРЫМ
+    // слоем поверх маскота, тем же изображением фона. VAN стоит на полу
+    // комнаты, а не на панели: без этого слоя его ноги лежали бы поверх
+    // «БАЛАНС / СТАВКА / ВЫИГРЫШ». Спрайт при этом можно строить в полный
+    // рост и не подгонять его высоту под верхний край панели.
+    const floorLine = new Sprite(
+      new Texture({
+        source: background.source,
+        frame: new Rectangle(0, PANEL_TOP, STAGE_W, STAGE_H - PANEL_TOP),
+      }),
+    );
+    floorLine.position.set(0, PANEL_TOP);
+    this.app.stage.addChild(floorLine);
 
     this.reels = new ReelSet(art.textures, REELS_BASE);
     this.reels.view.position.set(REELS_AT.x, REELS_AT.y);
@@ -201,6 +300,29 @@ export class Game {
     this.reels.overlayParent.addChild(this.stickyOverlay.view);
     this.win = new WinPresenter(this.reels);
     this.reels.overlayParent.addChild(this.win.view);
+
+    // Ряд кнопок готовыми рисунками поверх нарисованных на макете.
+    for (const [texture, box] of [
+      [skipTexture, ROW_BUTTONS.buy],
+      [turboTexture, ROW_BUTTONS.turbo],
+      [autoTexture, ROW_BUTTONS.auto],
+      [menuTexture, ROW_BUTTONS.menu],
+    ] as const) {
+      const button = new Sprite(texture);
+      button.position.set(box.x, box.y);
+      button.width = box.w;
+      button.height = box.h;
+      this.app.stage.addChild(button);
+    }
+
+    // Разметка поля — сразу над подложкой барабанов и ПОД символами:
+    // строчка размечает ячейки, а не лежит решёткой поверх игры.
+    this.reels.view.addChildAt(new ReelDividers().view, 1);
+
+    // Панель накопителя целиком — заголовок и три билета одним рисунком.
+    const ticketPanel = new Sprite(ticketTexture);
+    ticketPanel.position.set(TICKET_PANEL.x, TICKET_PANEL.y);
+    this.app.stage.addChild(ticketPanel);
 
     this.belt = new BeltStrip();
     this.app.stage.addChild(this.belt.view);
@@ -232,6 +354,16 @@ export class Game {
     this.restoreBoard();
     this.refreshAll();
 
+    // Музыка основной комнаты — сразу при входе, если её не выключали.
+    // Слушатели ниже нужны только на случай браузера: там политика автозапуска
+    // может отклонить первый play(), пока страницу не тронули, и запуск
+    // повторяется с первого же клика или клавиши.
+    music.setEnabled(this.save.music);
+    music.play('main');
+    const unlock = () => music.unlock();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+
     this.app.ticker.add((ticker) => this.reels.update(ticker.deltaMS / 1000));
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
@@ -239,6 +371,20 @@ export class Game {
   /** Канвас вписывается в окно целиком, сохраняя пропорции макета. */
   private fitToWindow(): void {
     const scale = Math.min(window.innerWidth / STAGE_W, window.innerHeight / STAGE_H);
+
+    // Плотность рисования подгоняется под то, во сколько раз макет растянут
+    // на экране. Иначе картинка пересчитывается дважды: сначала движок рисует
+    // сцену в канвас 1609x918, потом браузер растягивает готовый канвас под
+    // размер окна своим фильтром — и всё, включая маскота и надписи, слегка
+    // мылится. С подогнанной плотностью пересчёт один: движок сразу рисует
+    // в том разрешении, в каком картинку увидят.
+    const density = Math.min(3, Math.max(1, scale * (window.devicePixelRatio || 1)));
+    if (Math.abs(this.app.renderer.resolution - density) > 0.01) {
+      this.app.renderer.resize(STAGE_W, STAGE_H, density);
+    }
+
+    // Строго после resize: он сам выставляет размер канваса в CSS-пикселях
+    // (autoDensity), и без этого канвас вернулся бы к размеру макета.
     const canvas = this.app.canvas;
     canvas.style.width = `${Math.floor(STAGE_W * scale)}px`;
     canvas.style.height = `${Math.floor(STAGE_H * scale)}px`;
@@ -267,19 +413,14 @@ export class Game {
     stepper.position.set(MONEY.stepper.x, MONEY.stepper.y);
     this.put('stepper', stepper);
 
-    this.buildInfoPanel();
+    // Подпись шкалы в нижней полосе — там, где на макете было «DUKE'S FIST».
+    // Цвет снят с соседних запечённых подписей («BELT COLLECTION», «OIL UP»),
+    // иначе одна надпись в ряду светится ярче остальных.
+    const fist = label("VAN'S FIST", FIST_LABEL.size, 0xc08b2e, { letterSpacing: 1 });
+    fist.position.set(FIST_LABEL.x, FIST_LABEL.y);
+    this.app.stage.addChild(fist);
 
-    // Надпись «МЕНЮ» на кнопке, где на макете было «ПРАВИЛА».
-    // Обводка и цвет повторяют соседние «ТУРБО» и «АВТО» — иначе одна кнопка
-    // в ряду выглядит чужой.
-    const menu = label('МЕНЮ', 25, COLOR.paper, {
-      stroke: { color: 0x2a1a10, width: 5 },
-      letterSpacing: 2,
-    });
-    menu.anchor.set(0.5, 0.5);
-    menu.position.set(1236, 741);
-    this.put('menu', menu);
-    this.setText('menu', 'МЕНЮ');
+    this.buildInfoPanel();
 
     // Счётчик цепей на экране — в полосе OIL UP.
     const oil = label('', 22, COLOR.gold);
@@ -338,8 +479,8 @@ export class Game {
 
     // Цвета повторяют раскладку макета: старшие символы тёплые, младшие холодные.
     const pays: [string, number][] = [
-      ['DUKE', 0xff6b9a],
-      ['CHAMPION', 0xd4453a],
+      ['VAN', 0xff6b9a],
+      ['TICKET', 0xd4453a],
       ['REF', 0x4a9fff],
       ['ROOKIE', 0x7a6bff],
       ['FIST', 0xff9a3a],
@@ -358,21 +499,26 @@ export class Game {
       this.app.stage.addChild(zone.view);
     };
 
+    // Цвета подсветки — по образцам из набора ассетов: SPIN золотой,
+    // покупка бонуса неоново-фиолетовая, весь остальной металл раскалённый.
     add('spin', () => void this.spin());
     add('buy', () => void this.spin(true), COLOR.neon);
-    add('turbo', () => this.toggleTurbo(), COLOR.cyan);
-    add('auto', () => this.toggleAuto(), COLOR.cyan);
-    add('menu', () => this.openSettings(), COLOR.cyan);
-    add('betDown', () => this.stepBet(-1));
-    add('betUp', () => this.stepBet(1));
-    add('topUp', () => void this.openTopUp(), COLOR.gold);
+    add('turbo', () => this.toggleTurbo(), COLOR.fire);
+    add('auto', () => this.toggleAuto(), COLOR.fire);
+    add('menu', () => this.openSettings(), COLOR.fire);
+    add('betDown', () => this.stepBet(-1), COLOR.fire);
+    add('betUp', () => this.stepBet(1), COLOR.fire);
+    add('topUp', () => void this.openTopUp(), COLOR.fire);
     // Правила открываются только отсюда: одноимённая кнопка на панели была
     // третьим входом в тот же экран и убрана с макета.
-    add('help', () => this.rules.show());
-    add('fullscreen', () => this.toggleFullscreen(), COLOR.cyan);
-    add('settings', () => this.openSettings(), COLOR.cyan);
-    add('sound', () => this.setStatus('Звука пока нет — он следующим этапом.'));
-    add('music', () => this.setStatus('Музыки пока нет — она следующим этапом.'));
+    add('help', () => this.rules.show(), COLOR.fire);
+    add('fullscreen', () => this.toggleFullscreen(), COLOR.fire);
+    add('settings', () => this.openSettings(), COLOR.fire);
+    add('sound', () => this.setStatus('Звука пока нет — он следующим этапом.'), COLOR.fire);
+    add('music', () => this.toggleMusic(), COLOR.fire);
+
+    // Кнопка горит, пока музыка включена, — как «турбо» и «авто».
+    this.zones.get('music')?.setActive(music.isOn);
   }
 
   private buildBanner(): void {
@@ -481,6 +627,14 @@ export class Game {
     if (next < 0 || next >= BET_LEVELS.length) return;
     this.betIndex = next;
     this.refreshAll();
+    this.persist();
+  }
+
+  private toggleMusic(): void {
+    const on = !music.isOn;
+    music.setEnabled(on);
+    this.zones.get('music')?.setActive(on);
+    this.setStatus(on ? 'Музыка включена.' : 'Музыка выключена.');
     this.persist();
   }
 
@@ -809,6 +963,7 @@ export class Game {
       balance: this.balance,
       betIndex: this.betIndex,
       turbo: timing.speed > 1,
+      music: music.isOn,
       stats: this.stats,
       belt: { ...this.state.belt },
       sticky: this.state.sticky.map((s) => ({ ...s })),

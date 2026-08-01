@@ -11,6 +11,7 @@ export const COLOR = {
   ink: 0x0d0713, // почти чёрный, обводки
   paper: 0xf2e8dc, // светлый текст
   dim: 0x2a1a38, // панели
+  fire: 0xff5a1e, // раскалённый металл — подсветка нажатых кнопок
 } as const;
 
 /**
@@ -43,8 +44,8 @@ export const SYM_LABEL: Record<SymId, string> = {
   [Sym.SHAKER]: 'ШЕЙ',
   [Sym.ROOKIE]: 'RKI',
   [Sym.REF]: 'REF',
-  [Sym.CHAMPION]: 'CHM',
-  [Sym.DUKE]: 'DUKE',
+  [Sym.CHAMPION]: 'TKT',
+  [Sym.DUKE]: 'VAN',
   [Sym.WILD]: '♂',
   [Sym.SCATTER]: 'ДВЕРЬ',
   [Sym.CHAIN]: 'ЦЕПЬ',

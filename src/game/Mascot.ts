@@ -1,19 +1,38 @@
 import gsap from 'gsap';
 import { Container, Sprite, type Texture } from 'pixi.js';
-import { DUKE_AT } from './layout';
 import { dur } from './timing';
 
 /**
- * Живой DUKE поверх фона.
+ * Живой VAN поверх фона.
  *
- * Спрайт — прямоугольный кусок стены вместе с фигурой, с растушёванными краями
- * (см. tools/prep_background.py). Из этого следует железное правило: масштаб
- * никогда не опускается ниже единицы. Спрайт обязан перекрывать нарисованный
- * на фоне оригинал целиком, иначе из-под него полезет второй DUKE.
+ * Спрайт — вырезанная по контуру фигура на прозрачном фоне, уже сохранённая
+ * в экранном размере (tools/prep_new_assets_1.py). Поэтому масштаб здесь
+ * выходит равным единице, и текстура рисуется пиксель в пиксель — увеличение
+ * больше чем вдвое сделано заранее хорошим фильтром, а не видеокартой в кадре.
  *
- * Точка отсчёта — низ фигуры: дышит и напрягается он верхней половиной,
- * ноги при этом стоят на полу.
+ * Прежнего маскота, нарисованного прямо на макете, спрайт не прячет, а просто
+ * не встречает: с фона он снят совсем. Прятать пробовали, и это не работает —
+ * вырез не сплошной прямоугольник, и в просветах вокруг фигуры вылезал
+ * предшественник.
+ *
+ * Масштаб считается по осям раздельно: box может слегка не совпасть
+ * с пропорцией текстуры, и тогда фигура всё равно займёт отведённое место
+ * целиком. Единый множитель («cover») для этого не годится — при заметной
+ * разнице пропорций он выносит фигуру далеко за верхнюю границу box.
+ *
+ * Система координат: контейнер `view` стоит в НИЖНЕЙ ТОЧКЕ ПО ЦЕНТРУ box —
+ * там, где у фигуры пол (или сиденье трона в бонусной комнате). Спрайт внутри
+ * контейнера всегда в точке (0,0) с якорем (0.5,1), поэтому дышит и напрягается
+ * он верхней половиной, а нижняя точка не сдвигается ни на пиксель. Ноги при
+ * этом могут уходить ниже экрана: низ макета Game рисует поверх маскота.
  */
+
+export interface MascotBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 export type Mood = 'idle' | 'watch' | 'nod' | 'flex' | 'shake';
 
@@ -23,18 +42,23 @@ export class Mascot {
   readonly view = new Container();
 
   private readonly sprite: Sprite;
+  private scaleX = 1;
+  private scaleY = 1;
   private breath: gsap.core.Tween | null = null;
   private mood: Mood = 'idle';
 
-  constructor(texture: Texture) {
+  constructor(texture: Texture, box: MascotBox) {
     this.sprite = new Sprite(texture);
-    this.sprite.width = DUKE_AT.w;
-    this.sprite.height = DUKE_AT.h;
-    // Якорь по низу-центру: увеличение поднимает грудь и плечи, а не отрывает
-    // фигуру от пола.
     this.sprite.anchor.set(0.5, 1);
-    this.sprite.position.set(DUKE_AT.w / 2, DUKE_AT.h);
-    this.view.position.set(DUKE_AT.x, DUKE_AT.y);
+    this.sprite.position.set(0, 0);
+    // width/height — раздельные множители по осям, поэтому запоминаем их
+    // отдельно и не пользуемся общим this.sprite.scale.set(k) для «дыхания»:
+    // дышать он должен обеими осями от СВОИХ базовых множителей, не от одного.
+    this.scaleX = box.w / texture.width;
+    this.scaleY = box.h / texture.height;
+    this.sprite.scale.set(this.scaleX, this.scaleY);
+
+    this.view.position.set(box.x + box.w / 2, box.y + box.h);
     this.view.addChild(this.sprite);
 
     this.startBreathing();
@@ -42,10 +66,10 @@ export class Mascot {
 
   private startBreathing(): void {
     this.breath?.kill();
-    this.sprite.scale.set(1);
+    this.sprite.scale.set(this.scaleX, this.scaleY);
     this.breath = gsap.to(this.sprite.scale, {
-      x: BREATH_SCALE,
-      y: BREATH_SCALE,
+      x: this.scaleX * BREATH_SCALE,
+      y: this.scaleY * BREATH_SCALE,
       duration: dur(2.6),
       ease: 'sine.inOut',
       yoyo: true,
@@ -69,8 +93,8 @@ export class Mascot {
         gsap.killTweensOf(this.sprite);
         gsap.fromTo(
           this.sprite,
-          { y: DUKE_AT.h },
-          { y: DUKE_AT.h + 7, duration: dur(0.12), yoyo: true, repeat: 1, ease: 'sine.inOut' },
+          { y: 0 },
+          { y: 7, duration: dur(0.12), yoyo: true, repeat: 1, ease: 'sine.inOut' },
         );
         break;
       }
@@ -80,10 +104,10 @@ export class Mascot {
         gsap.killTweensOf(this.sprite.scale);
         gsap.fromTo(
           this.sprite.scale,
-          { x: 1, y: 1 },
+          { x: this.scaleX, y: this.scaleY },
           {
-            x: 1.055,
-            y: 1.055,
+            x: this.scaleX * 1.055,
+            y: this.scaleY * 1.055,
             duration: dur(0.22),
             ease: 'back.out(3)',
             yoyo: true,

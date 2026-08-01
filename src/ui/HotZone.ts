@@ -28,26 +28,30 @@ export class HotZone {
     this.view.pivot.set(w / 2, h / 2);
     this.view.position.set(x + w / 2, y + h / 2);
 
-    // Свечение живёт по бокам кнопки и гаснет наружу. Заливка всей площади,
-    // которая была здесь раньше, читалась как «выделено курсором» — будто
-    // кнопку не подсветили, а выделили мышью, как строку текста.
+    // Свечение обводит кнопку по всему контуру и гаснет наружу — как на
+    // образцах подсветки в наборе ассетов.
     //
-    // Градиент набирается полосами с падающей прозрачностью: дешевле фильтров,
-    // которые на слабой машине заметно проседают по кадрам.
-    const bands = 9;
-    const reach = 16;
-    const inset = Math.round(h * 0.16); // не доводим до самых углов — так мягче
+    // Прежний вариант светил только двумя полосами по бокам: сверху и снизу
+    // кнопка оставалась тёмной, и подсветка читалась как две отдельные
+    // засветки рядом, а не как загоревшаяся кнопка. Ещё раньше заливалась вся
+    // площадь — тогда это было похоже на выделение мышью, как строки текста.
+    //
+    // Градиент набирается вложенными контурами с падающей прозрачностью:
+    // дешевле фильтра размытия, который на слабой машине проседает по кадрам.
+    const bands = 8;
+    const reach = 11;
     for (let i = bands; i >= 1; i--) {
       const t = i / bands;
       const spread = reach * t;
-      const alpha = 0.3 * (1 - t) ** 1.6;
-      this.glow
-        .rect(-spread, inset, spread, h - inset * 2)
-        .rect(w, inset, spread, h - inset * 2)
-        .fill({ color: accent, alpha });
+      this.glow.roundRect(-spread, -spread, w + spread * 2, h + spread * 2, 8 + spread).stroke({
+        color: accent,
+        width: 3,
+        alpha: 0.26 * (1 - t) ** 1.3,
+      });
     }
-    // Тонкий контур привязывает свечение к самой кнопке, иначе оно висит рядом.
-    this.glow.roundRect(0.5, 0.5, w - 1, h - 1, 8).stroke({ color: accent, width: 2, alpha: 0.5 });
+    // Яркая кромка по самому краю кнопки: на образцах горит именно она,
+    // а внешнее свечение только расходится от неё.
+    this.glow.roundRect(1, 1, w - 2, h - 2, 8).stroke({ color: accent, width: 3, alpha: 0.95 });
     this.glow.alpha = 0;
     this.view.addChild(this.glow);
 
@@ -74,15 +78,35 @@ export class HotZone {
     });
   }
 
-  /** Короткое утопление — единственный отклик, который картинка дать не может. */
+  /**
+   * Отклик на нажатие: кнопка утопляется и вспыхивает контуром.
+   *
+   * Вспышка гасится не в ноль, а в состояние, положенное кнопке сейчас
+   * (включённый режим, курсор над ней) — иначе после нажатия «турбо» его
+   * постоянная подсветка гасла бы вместе со вспышкой.
+   */
   private press(): void {
     gsap.killTweensOf(this.view.scale);
     this.view.scale.set(0.96);
     gsap.to(this.view.scale, { x: 1, y: 1, duration: dur(0.16), ease: 'back.out(3)' });
+
+    gsap.killTweensOf(this.glow);
+    this.glow.alpha = 1;
+    gsap.to(this.glow, {
+      alpha: this.restAlpha(),
+      duration: dur(0.34),
+      ease: 'sine.out',
+    });
+  }
+
+  private restAlpha(): number {
+    if (!this.enabled) return 0;
+    if (this.active) return 1;
+    return this.hovered ? 0.6 : 0;
   }
 
   private refresh(): void {
-    const target = !this.enabled ? 0 : this.active ? 1 : this.hovered ? 0.6 : 0;
+    const target = this.restAlpha();
     gsap.killTweensOf(this.glow);
     // Разгорается медленнее, чем гаснет: так наведение читается как отклик,
     // а не как мигание при каждом проносе курсора над панелью.
