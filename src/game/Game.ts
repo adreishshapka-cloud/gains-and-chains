@@ -36,6 +36,7 @@ import menuUrl from '../assets/ui/menu-button.png';
 import moneyPanelUrl from '../assets/ui/money-panel.png';
 import stepperPanelUrl from '../assets/ui/stepper-panel.png';
 import infoPanelUrl from '../assets/ui/info-panel.png';
+import coinUrl from '../assets/symbols/coin.png';
 import {
   clearSave,
   defaultSave,
@@ -55,9 +56,11 @@ import { BeltStrip } from './BeltStrip';
 import { BigWinBanner } from './BigWinBanner';
 import {
   BUTTONS,
+  COIN,
   FIST_LABEL,
   INFO,
   LOGO_AT,
+  TICKET_BAR,
   TICKET_PANEL,
   ROW_BUTTONS,
   INFO_PANEL,
@@ -116,6 +119,9 @@ export class Game {
   private reels!: ReelSet;
   private win!: WinPresenter;
   private bigWin!: BigWinBanner;
+  /** Монета рядом с балансом — так же, как нарисовано на панели в наборе. */
+  private coinTexture!: Texture;
+  private coinIcon!: Sprite;
   private stickyOverlay!: StickyOverlay;
   private belt!: BeltStrip;
   private mascot!: Mascot;
@@ -223,6 +229,7 @@ export class Game {
       moneyTexture,
       stepperTexture,
       infoTexture,
+      coinTexture,
     ] = await Promise.all([
       Assets.load<Texture>(backgroundUrl),
       Assets.load<Texture>(vanUrl),
@@ -237,7 +244,10 @@ export class Game {
       Assets.load<Texture>(moneyPanelUrl),
       Assets.load<Texture>(stepperPanelUrl),
       Assets.load<Texture>(infoPanelUrl),
+      Assets.load<Texture>(coinUrl),
     ]);
+    coinTexture.source.scaleMode = 'nearest';
+    this.coinTexture = coinTexture;
     const art = await loadSymbolArt(this.app.renderer);
 
     const bg = new Sprite(background);
@@ -293,6 +303,7 @@ export class Game {
     this.app.stage.addChild(floorLine);
 
     this.reels = new ReelSet(art.textures, REELS_BASE);
+    this.reels.onReelStop = () => sound.reelStop();
     this.reels.view.position.set(REELS_AT.x, REELS_AT.y);
     this.app.stage.addChild(this.reels.view);
 
@@ -333,6 +344,15 @@ export class Game {
     // Разметка поля — сразу над подложкой барабанов и ПОД символами:
     // строчка размечает ячейки, а не лежит решёткой поверх игры.
     this.reels.view.addChildAt(new ReelDividers().view, 1);
+
+    // Рамка секции накопителя — под панелью с билетами, как у соседних
+    // «OIL UP» и «VAN'S FIST».
+    const ticketBar = new Graphics()
+      .roundRect(TICKET_BAR.x, TICKET_BAR.y, TICKET_BAR.w, TICKET_BAR.h, 8)
+      .fill(0x060709)
+      .roundRect(TICKET_BAR.x, TICKET_BAR.y, TICKET_BAR.w, TICKET_BAR.h, 8)
+      .stroke({ color: 0x2c2622, width: 2 });
+    this.app.stage.addChild(ticketBar);
 
     // Панель накопителя целиком — заголовок и три билета одним рисунком.
     const ticketPanel = new Sprite(ticketTexture);
@@ -424,6 +444,17 @@ export class Game {
     };
 
     this.put('balance', money(MONEY.balance.x, MONEY.balance.y, 30, COLOR.gold));
+
+    // Монета сразу за суммой баланса — на панели из набора она нарисована
+    // именно так. Число меняет ширину с каждой цифрой, поэтому монета не
+    // прибита гвоздями: её и саму сумму двигает setText(), удерживая пару
+    // по центру ячейки.
+    this.coinIcon = new Sprite(this.coinTexture);
+    this.coinIcon.anchor.set(0.5, 0.5);
+    this.coinIcon.width = COIN.size;
+    this.coinIcon.height = COIN.size;
+    this.coinIcon.y = MONEY.balance.y + 1;
+    this.app.stage.addChild(this.coinIcon);
     this.put('bet', money(MONEY.bet.x, MONEY.bet.y, 30, COLOR.paper));
     this.put('win', money(MONEY.win.x, MONEY.win.y, 30, COLOR.cyan));
 
@@ -787,9 +818,7 @@ export class Game {
     for (const ev of log) {
       switch (ev.type) {
         case 'baseSpin': {
-          sound.spin();
           await this.reels.spin(ev.spin.grid);
-          sound.stopSpin();
           this.stickyOverlay.update(ev.spin.sticky, 'base');
           this.setText('oil', String(ev.spin.collect?.chains.length ?? 0));
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin);
@@ -829,9 +858,7 @@ export class Game {
           this.setStatus(
             `Фриспин ${ev.index} · множитель ×${ev.mult} · осталось ${ev.spinsLeft}`,
           );
-          sound.spin();
           await this.reels.spin(ev.spin.grid);
-          sound.stopSpin();
           this.stickyOverlay.update(ev.spin.sticky, 'free');
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin, ev.mult);
           await this.maybeShowBigWin(ev.spin.totalWin);
@@ -908,6 +935,14 @@ export class Game {
     const t = this.texts.get(key);
     if (!t) return;
     t.text = value;
+
+    if (key === 'balance') {
+      // Сумма и монета — одна группа по центру ячейки: сумма сдвигается влево
+      // ровно на половину того места, которое занимает монета с зазором.
+      const shift = (COIN.size + COIN.gap) / 2;
+      t.x = MONEY.balance.x - shift;
+      this.coinIcon.x = t.x + t.width / 2 + COIN.gap + COIN.size / 2;
+    }
 
     // Значения правой панели ужимаются, если не влезли в свою ячейку:
     // она нарисована под четыре цифры, а на максимальной ставке их бывает семь.

@@ -96,6 +96,13 @@ export class ReelSet {
   }
 
   /** Прокрутить и остановиться на переданном поле. */
+  /**
+   * Барабан остановился. Сюда вешают звук: щелчок нужен на каждую остановку,
+   * а не один на весь спин — иначе он отыгрывает раньше, чем барабаны вообще
+   * встанут, и к самому падению уже не относится.
+   */
+  onReelStop?: (index: number) => void;
+
   async spin(grid: Grid): Promise<void> {
     for (const reel of this.reels) reel.startSpin();
 
@@ -107,6 +114,7 @@ export class ReelSet {
 
       await pause(i === 0 ? FIRST_STOP_DELAY : anticipate ? ANTICIPATION_DELAY : STOP_GAP);
       await this.reels[i].stopOn(grid[i]);
+      this.onReelStop?.(i);
 
       for (let row = 0; row < ROWS; row++) {
         if (grid[i][row] === Sym.SCATTER) scatters++;
