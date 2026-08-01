@@ -11,7 +11,6 @@ import {
 import type { BeltReward } from '../core/features/beltCollection';
 import { BONUS_BUY_COST, DOORS, type DoorId } from '../core/features/freeSpins';
 import type { RoundEvent } from '../core/events';
-import { CHAIN_VALUES, PAYTABLE } from '../core/paytable';
 import { REELS_BASE, REELS_FREE } from '../core/reels';
 import {
   createGameState,
@@ -23,13 +22,7 @@ import {
 } from '../core/round';
 import { createRng } from '../core/rng';
 import { drawGrid } from '../core/spin';
-import {
-  LINES,
-  STICKY_MULT_LADDER,
-  Sym,
-  type CollectWin,
-  type LineWin,
-} from '../core/types';
+import { Sym, type CollectWin, type LineWin } from '../core/types';
 import backgroundUrl from '../assets/ui/background.png';
 import vanUrl from '../assets/ui/van-stand.png';
 import logoUrl from '../assets/ui/logo.png';
@@ -40,7 +33,9 @@ import skipUrl from '../assets/ui/skip-button.png';
 import turboUrl from '../assets/ui/turbo-button.png';
 import autoUrl from '../assets/ui/auto-button.png';
 import menuUrl from '../assets/ui/menu-button.png';
-import coinUrl from '../assets/symbols/coin.png';
+import moneyPanelUrl from '../assets/ui/money-panel.png';
+import stepperPanelUrl from '../assets/ui/stepper-panel.png';
+import infoPanelUrl from '../assets/ui/info-panel.png';
 import {
   clearSave,
   defaultSave,
@@ -65,7 +60,10 @@ import {
   LOGO_AT,
   TICKET_PANEL,
   ROW_BUTTONS,
+  INFO_PANEL,
   MONEY,
+  MONEY_PANEL,
+  STEPPER_PANEL,
   OIL_BAR,
   PANEL_TOP,
   REELS_AT,
@@ -77,6 +75,7 @@ import {
 } from './layout';
 import { Mascot } from './Mascot';
 import { music } from './music';
+import { sound } from './sound';
 import { COLOR } from './palette';
 import { ReelDividers } from './ReelDividers';
 import { ReelSet } from './ReelSet';
@@ -114,9 +113,6 @@ export class Game {
   private reels!: ReelSet;
   private win!: WinPresenter;
   private bigWin!: BigWinBanner;
-  /** Иконка монеты из исходного макета — стоит рядом со стоимостью покупки. */
-  private coinTexture!: Texture;
-  private coinIcon!: Sprite;
   private stickyOverlay!: StickyOverlay;
   private belt!: BeltStrip;
   private mascot!: Mascot;
@@ -213,7 +209,6 @@ export class Game {
     const [
       background,
       vanTexture,
-      coinTexture,
       logoTexture,
       signTexture,
       tableTexture,
@@ -222,10 +217,12 @@ export class Game {
       turboTexture,
       autoTexture,
       menuTexture,
+      moneyTexture,
+      stepperTexture,
+      infoTexture,
     ] = await Promise.all([
       Assets.load<Texture>(backgroundUrl),
       Assets.load<Texture>(vanUrl),
-      Assets.load<Texture>(coinUrl),
       Assets.load<Texture>(logoUrl),
       Assets.load<Texture>(signUrl),
       Assets.load<Texture>(tableUrl),
@@ -234,9 +231,10 @@ export class Game {
       Assets.load<Texture>(turboUrl),
       Assets.load<Texture>(autoUrl),
       Assets.load<Texture>(menuUrl),
+      Assets.load<Texture>(moneyPanelUrl),
+      Assets.load<Texture>(stepperPanelUrl),
+      Assets.load<Texture>(infoPanelUrl),
     ]);
-    coinTexture.source.scaleMode = 'nearest';
-    this.coinTexture = coinTexture;
     const art = await loadSymbolArt(this.app.renderer);
 
     const bg = new Sprite(background);
@@ -301,6 +299,20 @@ export class Game {
     this.win = new WinPresenter(this.reels);
     this.reels.overlayParent.addChild(this.win.view);
 
+    // Готовые панели поверх нарисованных на макете: деньги, степпер, правая
+    // таблица. Всё три идут после слоя нижней полосы — иначе она бы их накрыла.
+    for (const [texture, box] of [
+      [moneyTexture, MONEY_PANEL],
+      [stepperTexture, STEPPER_PANEL],
+      [infoTexture, INFO_PANEL],
+    ] as const) {
+      const panel = new Sprite(texture);
+      panel.position.set(box.x, box.y);
+      panel.width = box.w;
+      panel.height = box.h;
+      this.app.stage.addChild(panel);
+    }
+
     // Ряд кнопок готовыми рисунками поверх нарисованных на макете.
     for (const [texture, box] of [
       [skipTexture, ROW_BUTTONS.buy],
@@ -359,6 +371,7 @@ export class Game {
     // может отклонить первый play(), пока страницу не тронули, и запуск
     // повторяется с первого же клика или клавиши.
     music.setEnabled(this.save.music);
+    sound.setEnabled(this.save.sound);
     music.play('main');
     const unlock = () => music.unlock();
     window.addEventListener('pointerdown', unlock, { once: true });
@@ -398,8 +411,11 @@ export class Game {
   }
 
   private buildTexts(): void {
+    // Значения стоят по центру своих ячеек на новых панелях, поэтому якорь
+    // посередине, а не в левом верхнем углу, как было на плоской полосе.
     const money = (x: number, y: number, size: number, color: number) => {
       const t = label('', size, color);
+      t.anchor.set(0.5, 0.5);
       t.position.set(x, y);
       return t;
     };
@@ -409,7 +425,7 @@ export class Game {
     this.put('win', money(MONEY.win.x, MONEY.win.y, 30, COLOR.cyan));
 
     const stepper = label('', 30, COLOR.paper);
-    stepper.anchor.set(0.5, 0);
+    stepper.anchor.set(0.5, 0.5);
     stepper.position.set(MONEY.stepper.x, MONEY.stepper.y);
     this.put('stepper', stepper);
 
@@ -438,58 +454,29 @@ export class Game {
    * Правая панель целиком: подписи, значения и разделители.
    * С макета её нутро стёрто — так обе колонки гарантированно выровнены.
    */
+  /**
+   * Пять значений правой панели.
+   *
+   * Всё остальное — подписи, разделители, рамки ячеек, таблица выплат
+   * и строка горячих клавиш — нарисовано на самой панели (INFO_PANEL).
+   * Раньше движок рисовал там обе колонки целиком; теперь панель приходит
+   * готовой, и держать вторую копию постоянных чисел незачем.
+   */
   private buildInfoPanel(): void {
-    const rules = new Graphics();
-    for (const y of INFO.rules) {
-      rules.moveTo(INFO.labelX, y).lineTo(INFO.valueRight, y);
-    }
-    rules.stroke({ color: 0x6b4429, width: 2, alpha: 0.8 });
-    this.app.stage.addChild(rules);
-
-    const row = (key: string, top: number, index: number, caption: string, color: number) => {
-      const y = top + index * INFO.step;
-
-      const name = label(caption, 18, color);
-      name.position.set(INFO.labelX, y);
-      this.app.stage.addChild(name);
-
-      const value = label('', 18, COLOR.paper);
-      value.anchor.set(1, 0);
+    // Цвет снят с запечённых значений той же панели («Линий 20» осталось
+    // нарисованным) — иначе живые числа светились белым рядом с золотыми.
+    const cell = (key: string, y: number) => {
+      const value = label('', INFO.size, 0xe1af4c);
+      value.anchor.set(1, 0.5);
       value.position.set(INFO.valueRight, y);
       this.put(key, value);
     };
 
-    row('tokens', INFO.statsTop, 0, 'Жетоны', 0x9a8aaa);
-    row('sticky', INFO.statsTop, 1, 'Липких ♂', 0x9a8aaa);
-    row('dry', INFO.statsTop, 2, 'Сухая серия', 0x9a8aaa);
-
-    row('lines', INFO.betTop, 0, 'Линий', 0x9a8aaa);
-    row('betCoins', INFO.betTop, 1, 'Ставка', 0x9a8aaa);
-    row('buyCoins', INFO.betTop, 2, 'Покупка', 0x9a8aaa);
-
-    // Монета из исходного макета: там она стояла рядом с ценой покупки бонуса
-    // («80 x 🪙»). Число подрастает с ростом ставки, поэтому монета не прибита
-    // гвоздями — она едет вслед за левым краем текста в setText().
-    this.coinIcon = new Sprite(this.coinTexture);
-    this.coinIcon.anchor.set(1, 0.15);
-    this.coinIcon.width = 22;
-    this.coinIcon.height = 22;
-    this.coinIcon.y = INFO.betTop + 2 * INFO.step;
-    this.app.stage.addChild(this.coinIcon);
-
-    // Цвета повторяют раскладку макета: старшие символы тёплые, младшие холодные.
-    const pays: [string, number][] = [
-      ['VAN', 0xff6b9a],
-      ['TICKET', 0xd4453a],
-      ['REF', 0x4a9fff],
-      ['ROOKIE', 0x7a6bff],
-      ['FIST', 0xff9a3a],
-      ['CHAIN', COLOR.gold],
-      ['WILD', COLOR.gold],
-    ];
-    for (const [i, [caption, color]] of pays.entries()) {
-      row(`pay${i}`, INFO.payTop, i, caption, color);
-    }
+    cell('tokens', INFO.rows.tokens);
+    cell('sticky', INFO.rows.sticky);
+    cell('dry', INFO.rows.dry);
+    cell('betCoins', INFO.rows.bet);
+    cell('buyCoins', INFO.rows.buy);
   }
 
   private buildZones(): void {
@@ -518,11 +505,12 @@ export class Game {
     add('help', () => this.rules.show(), COLOR.fire);
     add('fullscreen', () => this.toggleFullscreen(), COLOR.fire);
     add('settings', () => this.openSettings(), COLOR.fire);
-    add('sound', () => this.setStatus('Звука пока нет — он следующим этапом.'), COLOR.fire);
+    add('sound', () => this.toggleSound(), COLOR.fire);
     add('music', () => this.toggleMusic(), COLOR.fire);
 
     // Кнопка горит, пока музыка включена, — как «турбо» и «авто».
     this.zones.get('music')?.setActive(music.isOn);
+    this.zones.get('sound')?.setActive(sound.isOn);
   }
 
   private buildBanner(): void {
@@ -631,6 +619,14 @@ export class Game {
     if (next < 0 || next >= BET_LEVELS.length) return;
     this.betIndex = next;
     this.refreshAll();
+    this.persist();
+  }
+
+  private toggleSound(): void {
+    const on = !sound.isOn;
+    sound.setEnabled(on);
+    this.zones.get('sound')?.setActive(on);
+    this.setStatus(on ? 'Звук включён.' : 'Звук выключен.');
     this.persist();
   }
 
@@ -788,7 +784,9 @@ export class Game {
     for (const ev of log) {
       switch (ev.type) {
         case 'baseSpin': {
+          sound.spin();
           await this.reels.spin(ev.spin.grid);
+          sound.stopSpin();
           this.stickyOverlay.update(ev.spin.sticky, 'base');
           this.setText('oil', String(ev.spin.collect?.chains.length ?? 0));
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin);
@@ -828,7 +826,9 @@ export class Game {
           this.setStatus(
             `Фриспин ${ev.index} · множитель ×${ev.mult} · осталось ${ev.spinsLeft}`,
           );
+          sound.spin();
           await this.reels.spin(ev.spin.grid);
+          sound.stopSpin();
           this.stickyOverlay.update(ev.spin.sticky, 'free');
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin, ev.mult);
           await this.maybeShowBigWin(ev.spin.totalWin);
@@ -906,12 +906,6 @@ export class Game {
     if (!t) return;
     t.text = value;
 
-    if (key === 'buyCoins') {
-      // Число право-выровнено по INFO.valueRight и меняет ширину с каждой
-      // цифрой — монета цепляется за его левый край, а не стоит в фиксированной
-      // точке, иначе на пятизначных суммах она бы наехала на текст.
-      this.coinIcon.x = t.x - t.width - 6;
-    }
   }
 
   private setStatus(text: string): void {
@@ -938,23 +932,9 @@ export class Game {
     this.setText('tokens', `${this.state.belt.tokens} / 3`);
     this.setText('sticky', String(this.state.sticky.length));
     this.setText('dry', String(this.state.belt.dry));
-    this.setText('lines', String(LINES));
     // Без слова «монет»: с ним длинные суммы упирались в край панели.
     this.setText('betCoins', this.betCoins.toLocaleString('ru-RU'));
     this.setText('buyCoins', (BONUS_BUY_COST * this.betCoins).toLocaleString('ru-RU'));
-
-    // Строки таблицы выплат идут в том же порядке, что подписи на фоне.
-    const ladder = STICKY_MULT_LADDER;
-    const rows = [
-      `${PAYTABLE[Sym.DUKE][3]} – ${PAYTABLE[Sym.DUKE][5]}`,
-      `${PAYTABLE[Sym.CHAMPION][3]} – ${PAYTABLE[Sym.CHAMPION][5]}`,
-      `${PAYTABLE[Sym.REF][3]} – ${PAYTABLE[Sym.REF][5]}`,
-      `${PAYTABLE[Sym.ROOKIE][3]} – ${PAYTABLE[Sym.ROOKIE][5]}`,
-      'собирает всё',
-      `×${CHAIN_VALUES[0].value} – ×${CHAIN_VALUES[CHAIN_VALUES.length - 1].value}`,
-      `×${ladder[0]} → ×${ladder[ladder.length - 1]}`,
-    ];
-    for (const [i, value] of rows.entries()) this.setText(`pay${i}`, value);
 
     this.belt.set(this.state.belt.tokens);
     this.setInteractive(!this.busy);
@@ -968,6 +948,7 @@ export class Game {
       betIndex: this.betIndex,
       turbo: timing.speed > 1,
       music: music.isOn,
+      sound: sound.isOn,
       stats: this.stats,
       belt: { ...this.state.belt },
       sticky: this.state.sticky.map((s) => ({ ...s })),

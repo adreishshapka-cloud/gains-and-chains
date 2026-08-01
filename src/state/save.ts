@@ -34,6 +34,8 @@ export interface SaveData {
   turbo: boolean;
   /** Фоновая музыка включена. Кнопка «нота» в нижнем ряду. */
   music: boolean;
+  /** Звуковые эффекты включены. Кнопка «динамик» рядом с ней. */
+  sound: boolean;
   stats: Stats;
   belt: { tokens: number; dry: number };
   sticky: StickyWild[];
@@ -61,6 +63,7 @@ export function defaultSave(): SaveData {
     betIndex: 0,
     turbo: false,
     music: true,
+    sound: true,
     stats: emptyStats(),
     belt: { tokens: 0, dry: 0 },
     sticky: [],
@@ -83,6 +86,7 @@ export function loadSave(): SaveData {
       betIndex: typeof parsed.betIndex === 'number' ? parsed.betIndex : base.betIndex,
       turbo: typeof parsed.turbo === 'boolean' ? parsed.turbo : base.turbo,
       music: typeof parsed.music === 'boolean' ? parsed.music : base.music,
+      sound: typeof parsed.sound === 'boolean' ? parsed.sound : base.sound,
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
       belt: { ...base.belt, ...(parsed.belt ?? {}) },
       sticky: Array.isArray(parsed.sticky) ? parsed.sticky : [],
