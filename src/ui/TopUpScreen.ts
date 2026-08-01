@@ -24,7 +24,7 @@ export interface TopUpOption {
 export const TOP_UP_OPTIONS: readonly TopUpOption[] = [
   { coins: 5_000, title: 'РАЗМИНКА', note: 'подход на пробу' },
   { coins: 20_000, title: 'РАБОЧИЙ ВЕС', note: 'обычная тренировка' },
-  { coins: 100_000, title: 'МАКСИМУМ', note: 'DUKE одобряет' },
+  { coins: 100_000, title: 'МАКСИМУМ', note: 'VAN одобряет' },
 ];
 
 const CARD_W = 300;

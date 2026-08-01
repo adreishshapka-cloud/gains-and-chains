@@ -22,7 +22,7 @@ const FILE_NAME: Record<SymId, string> = {
   [Sym.ROOKIE]: 'rookie',
   [Sym.REF]: 'ref',
   [Sym.CHAMPION]: 'champion',
-  [Sym.DUKE]: 'duke',
+  [Sym.DUKE]: 'van',
   [Sym.WILD]: 'wild',
   [Sym.SCATTER]: 'scatter',
   // Звенья без номинала: на барабане цепь показывается именно так, а число
