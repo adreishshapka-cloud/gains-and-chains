@@ -102,6 +102,9 @@ const BIG_WIN_THRESHOLD = 10;
  * у мат-модели и разыгрывает его во времени.
  */
 
+/** Значения правой панели: у них общая ячейка фиксированной ширины. */
+const INFO_CELLS = new Set(['tokens', 'sticky', 'dry', 'betCoins', 'buyCoins']);
+
 /** Ниже этого числа ставок пополнение начинает мигать. */
 const LOW_BALANCE = 1;
 
@@ -905,6 +908,12 @@ export class Game {
     const t = this.texts.get(key);
     if (!t) return;
     t.text = value;
+
+    // Значения правой панели ужимаются, если не влезли в свою ячейку:
+    // она нарисована под четыре цифры, а на максимальной ставке их бывает семь.
+    if (INFO_CELLS.has(key)) {
+      t.scale.set(Math.min(1, INFO.maxWidth / Math.max(1, t.width / t.scale.x)));
+    }
 
   }
 

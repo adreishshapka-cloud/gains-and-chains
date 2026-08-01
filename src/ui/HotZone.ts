@@ -9,14 +9,17 @@ import type { Rect } from '../game/layout';
  *
  * Сама кнопка уже есть на макете — рисовать её заново означало бы положить
  * поверх худшую копию. Зона добавляет только то, чего у картинки быть не может:
- * реакцию на курсор, свечение включённого режима и гашение, когда кнопка
- * недоступна.
+ * реакцию на курсор, вспышку при нажатии и свечение включённого режима.
+ *
+ * Прямоугольник зоны обязан совпадать с нарисованной кнопкой пиксель в пиксель:
+ * по его границе идёт подсветка, и зона, сидящая внутри кнопки с запасом,
+ * прочерчивает рамку поперёк неё. Все числа в BUTTONS обмерены по рамкам
+ * кнопок на фоне, а не прикинуты на глаз.
  */
 export class HotZone {
   readonly view = new Container();
 
   private readonly glow = new Graphics();
-  private readonly veil = new Graphics();
   private enabled = true;
   private active = false;
   private hovered = false;
@@ -54,10 +57,6 @@ export class HotZone {
     this.glow.roundRect(1, 1, w - 2, h - 2, 8).stroke({ color: accent, width: 3, alpha: 0.95 });
     this.glow.alpha = 0;
     this.view.addChild(this.glow);
-
-    this.veil.roundRect(0, 0, w, h, 8).fill({ color: 0x0a0510, alpha: 0.62 });
-    this.veil.visible = false;
-    this.view.addChild(this.veil);
 
     this.view.eventMode = 'static';
     this.view.cursor = 'pointer';
@@ -117,10 +116,17 @@ export class HotZone {
     });
   }
 
+  /**
+   * Недоступность показывается только курсором и погашенной подсветкой.
+   *
+   * Тёмную плёнку поверх кнопки убрали: её прямоугольник со скруглением
+   * не совпадал с формой нарисованной кнопки — у SPIN плита с цепями
+   * по краям, и плёнка ложилась поперёк них косым пятном. Кнопка и без
+   * неё не нажимается, а нажатие всё равно отзывается утоплением.
+   */
   setEnabled(on: boolean): void {
     this.enabled = on;
     this.view.cursor = on ? 'pointer' : 'default';
-    this.veil.visible = !on;
     this.refresh();
   }
 
