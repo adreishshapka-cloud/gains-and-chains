@@ -2,7 +2,7 @@ import { Container, Graphics, Rectangle, Text } from 'pixi.js';
 import { AUTO_ROUNDS } from '../game/rules';
 import { COLOR } from '../game/palette';
 import { rankFor, type Stats } from '../state/save';
-import { Button, label } from './widgets';
+import { Button, Slider, label } from './widgets';
 
 /**
  * Настройки и личная статистика.
@@ -14,6 +14,8 @@ import { Button, label } from './widgets';
 
 export interface SettingsState {
   turbo: boolean;
+  /** Громкость музыки, 0..1. */
+  volume: number;
   stats: Stats;
   balance: number;
 }
@@ -22,10 +24,13 @@ export class SettingsScreen {
   readonly view = new Container();
 
   onToggleTurbo: (() => void) | null = null;
+  onVolume: ((value: number) => void) | null = null;
   onReset: (() => void) | null = null;
 
   private readonly statsText: Text;
   private readonly turboButton: Button;
+  private readonly volumeSlider: Slider;
+  private readonly volumeValue: Text;
   private readonly resetButton: Button;
   private resetArmed = false;
 
@@ -40,9 +45,10 @@ export class SettingsScreen {
     this.view.addChild(shade);
 
     const panelW = 760;
-    // Высота считается от содержимого: два раздела с пояснениями, девять строк
-    // статистики и ряд кнопок. При 560 последняя строка уезжала под кнопку сброса.
-    const panelH = 726;
+    // Высота считается от содержимого: три раздела с пояснениями, девять строк
+    // статистики и ряд кнопок. При 560 последняя строка уезжала под кнопку
+    // сброса, при 726 — не влезал добавленный ползунок громкости.
+    const panelH = 820;
     const panel = new Container();
     panel.position.set((width - panelW) / 2, (height - panelH) / 2);
     panel.eventMode = 'static';
@@ -72,10 +78,32 @@ export class SettingsScreen {
     turboNote.position.set(246, 110);
     panel.addChild(turboNote);
 
+    // Громкость музыки. Кнопка «нота» в нижнем ряду только включает и выключает
+    // её целиком; тише или громче сделать было нечем, а музыка играет постоянно.
+    const volumeTitle = label('ГРОМКОСТЬ МУЗЫКИ', 22, COLOR.gold);
+    volumeTitle.position.set(36, 172);
+    panel.addChild(volumeTitle);
+
+    this.volumeValue = label('', 20, COLOR.paper);
+    this.volumeValue.anchor.set(1, 0.5);
+    this.volumeValue.position.set(panelW - 36, 183);
+    panel.addChild(this.volumeValue);
+
+    this.volumeSlider = new Slider({
+      width: 420,
+      value: 0,
+      onChange: (v) => {
+        this.volumeValue.text = `${Math.round(v * 100)}%`;
+        this.onVolume?.(v);
+      },
+    });
+    this.volumeSlider.view.position.set(36, 224);
+    panel.addChild(this.volumeSlider.view);
+
     // Про автоспин игрок иначе не узнает: кнопка «АВТО» не объясняет,
     // сколько раундов она запускает и как её остановить.
     const autoTitle = label('АВТО', 22, COLOR.gold);
-    autoTitle.position.set(36, 168);
+    autoTitle.position.set(36, 262);
     panel.addChild(autoTitle);
 
     const autoNote = label(
@@ -85,15 +113,15 @@ export class SettingsScreen {
       0x9a8aaa,
       { lineHeight: 24 },
     );
-    autoNote.position.set(36, 198);
+    autoNote.position.set(36, 292);
     panel.addChild(autoNote);
 
     const statsTitle = label('ТВОЯ СТАТИСТИКА', 22, COLOR.cyan);
-    statsTitle.position.set(36, 262);
+    statsTitle.position.set(36, 356);
     panel.addChild(statsTitle);
 
     this.statsText = label('', 19, COLOR.paper, { lineHeight: 30 });
-    this.statsText.position.set(36, 302);
+    this.statsText.position.set(36, 396);
     panel.addChild(this.statsText);
 
     this.resetButton = new Button({
@@ -136,6 +164,8 @@ export class SettingsScreen {
     this.resetArmed = false;
     this.resetButton.setText('НАЧАТЬ ЗАНОВО');
     this.turboButton.setActive(state.turbo);
+    this.volumeSlider.setValue(state.volume);
+    this.volumeValue.text = `${Math.round(state.volume * 100)}%`;
 
     const s = state.stats;
     const rtp = s.wagered > 0 ? ((s.won / s.wagered) * 100).toFixed(1) + '%' : '—';

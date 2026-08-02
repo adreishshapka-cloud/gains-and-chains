@@ -60,7 +60,6 @@ import {
   FIST_LABEL,
   INFO,
   LOGO_AT,
-  TICKET_BAR,
   TICKET_PANEL,
   ROW_BUTTONS,
   INFO_PANEL,
@@ -345,18 +344,11 @@ export class Game {
     // строчка размечает ячейки, а не лежит решёткой поверх игры.
     this.reels.view.addChildAt(new ReelDividers().view, 1);
 
-    // Рамка секции накопителя — под панелью с билетами, как у соседних
-    // «OIL UP» и «VAN'S FIST».
-    const ticketBar = new Graphics()
-      .roundRect(TICKET_BAR.x, TICKET_BAR.y, TICKET_BAR.w, TICKET_BAR.h, 8)
-      .fill(0x060709)
-      .roundRect(TICKET_BAR.x, TICKET_BAR.y, TICKET_BAR.w, TICKET_BAR.h, 8)
-      .stroke({ color: 0x2c2622, width: 2 });
-    this.app.stage.addChild(ticketBar);
-
-    // Панель накопителя целиком — заголовок и три билета одним рисунком.
+    // Панель накопителя целиком: рамка, заголовок и три билета одним рисунком.
     const ticketPanel = new Sprite(ticketTexture);
     ticketPanel.position.set(TICKET_PANEL.x, TICKET_PANEL.y);
+    ticketPanel.width = TICKET_PANEL.w;
+    ticketPanel.height = TICKET_PANEL.h;
     this.app.stage.addChild(ticketPanel);
 
     this.belt = new BeltStrip();
@@ -381,7 +373,11 @@ export class Game {
     this.settings = new SettingsScreen(STAGE_W, STAGE_H);
     this.settings.onToggleTurbo = () => {
       this.toggleTurbo();
-      this.settings.show({ turbo: timing.speed > 1, stats: this.stats, balance: this.balance });
+      this.settings.show({ turbo: timing.speed > 1, volume: music.level, stats: this.stats, balance: this.balance });
+    };
+    this.settings.onVolume = (value) => {
+      music.setVolume(value);
+      this.persist();
     };
     this.settings.onReset = () => this.resetProgress();
     this.app.stage.addChild(this.settings.view);
@@ -393,6 +389,7 @@ export class Game {
     // Слушатели ниже нужны только на случай браузера: там политика автозапуска
     // может отклонить первый play(), пока страницу не тронули, и запуск
     // повторяется с первого же клика или клавиши.
+    music.setVolume(this.save.musicVolume);
     music.setEnabled(this.save.music);
     sound.setEnabled(this.save.sound);
     music.play('main');
@@ -455,8 +452,11 @@ export class Game {
     this.coinIcon.height = COIN.size;
     this.coinIcon.y = MONEY.balance.y + 1;
     this.app.stage.addChild(this.coinIcon);
-    this.put('bet', money(MONEY.bet.x, MONEY.bet.y, 30, COLOR.paper));
-    this.put('win', money(MONEY.win.x, MONEY.win.y, 30, COLOR.cyan));
+    // Ставка и выигрыш тем же золотом, что и баланс: на панели из набора
+    // все три значения одного цвета, и белое с бирюзовым рядом с ним
+    // выглядели как три разных интерфейса в одной полосе.
+    this.put('bet', money(MONEY.bet.x, MONEY.bet.y, 30, COLOR.gold));
+    this.put('win', money(MONEY.win.x, MONEY.win.y, 30, COLOR.gold));
 
     const stepper = label('', 30, COLOR.paper);
     stepper.anchor.set(0.5, 0.5);
@@ -644,7 +644,7 @@ export class Game {
 
   private openSettings(): void {
     if (this.busy) return;
-    this.settings.show({ turbo: timing.speed > 1, stats: this.stats, balance: this.balance });
+    this.settings.show({ turbo: timing.speed > 1, volume: music.level, stats: this.stats, balance: this.balance });
   }
 
   private stepBet(delta: number): void {
@@ -993,6 +993,7 @@ export class Game {
       turbo: timing.speed > 1,
       music: music.isOn,
       sound: sound.isOn,
+      musicVolume: music.level,
       stats: this.stats,
       belt: { ...this.state.belt },
       sticky: this.state.sticky.map((s) => ({ ...s })),

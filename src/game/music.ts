@@ -1,6 +1,7 @@
 import { Howl } from 'howler';
 import bonusUrl from '../assets/audio/theme-bonus.mp3';
 import mainUrl from '../assets/audio/theme-main.mp3';
+import { DEFAULT_VOLUME } from '../state/save';
 
 /**
  * Фоновая музыка: одна тема в основной комнате, другая в бонусной.
@@ -22,7 +23,6 @@ import mainUrl from '../assets/audio/theme-main.mp3';
 
 export type Theme = 'main' | 'bonus';
 
-const VOLUME = 0.35;
 const FADE_MS = 700;
 
 const SOURCES: Record<Theme, string> = {
@@ -34,12 +34,37 @@ class MusicPlayer {
   private tracks = new Map<Theme, Howl>();
   private current: Theme | null = null;
   private enabled = false;
+  private volume = DEFAULT_VOLUME;
   /** Тема, которую надо запустить, как только браузер разрешит звук. */
   private pending: Theme | null = null;
   private unlocked = false;
 
   get isOn(): boolean {
     return this.enabled;
+  }
+
+  get level(): number {
+    return this.volume;
+  }
+
+  /**
+   * Громкость 0..1. Применяется сразу, без плавного перехода: ползунок
+   * двигают на слух, и задержка в семьсот миллисекунд превратила бы
+   * подстройку в угадайку.
+   *
+   * Ставится не через `volume()`, а мгновенным затуханием: у Howler нет
+   * способа отменить уже идущее затухание, и обычная установка громкости
+   * посреди него тут же затирается его следующим шагом. Затухание в 1 мс
+   * такое же затухание — оно просто заменяет предыдущее собой.
+   *
+   * Когда музыка выключена, трогать нечего: там как раз идёт затухание
+   * на остановку, и вмешиваться в него означало бы вернуть трек к жизни.
+   */
+  setVolume(value: number): void {
+    this.volume = Math.min(1, Math.max(0, value));
+    if (!this.enabled || !this.current) return;
+    const current = this.tracks.get(this.current);
+    if (current?.playing()) current.fade(current.volume(), this.volume, 1);
   }
 
   /**
@@ -81,7 +106,7 @@ class MusicPlayer {
     // иначе он сработает уже после того, как мы её вернули, и трек замолчит.
     next.off('fade');
     if (!next.playing()) next.play();
-    next.fade(next.volume(), VOLUME, FADE_MS);
+    next.fade(next.volume(), this.volume, FADE_MS);
   }
 
   private stopAll(): void {

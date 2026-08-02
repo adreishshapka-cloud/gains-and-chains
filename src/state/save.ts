@@ -36,12 +36,21 @@ export interface SaveData {
   music: boolean;
   /** Звуковые эффекты включены. Кнопка «динамик» рядом с ней. */
   sound: boolean;
+  /** Громкость музыки, 0..1. Ползунок в настройках. */
+  musicVolume: number;
   stats: Stats;
   belt: { tokens: number; dry: number };
   sticky: StickyWild[];
 }
 
 export const START_BALANCE = 5_000;
+
+/**
+ * Громкость музыки по умолчанию. Живёт здесь, а не в плеере: это значение
+ * сохранения, а тянуть в модуль сохранения плеер вместе с Howler и тремя
+ * мегабайтами звука ради одной константы — плохой обмен.
+ */
+export const DEFAULT_VOLUME = 0.35;
 
 export function emptyStats(): Stats {
   return {
@@ -64,6 +73,7 @@ export function defaultSave(): SaveData {
     turbo: false,
     music: true,
     sound: true,
+    musicVolume: DEFAULT_VOLUME,
     stats: emptyStats(),
     belt: { tokens: 0, dry: 0 },
     sticky: [],
@@ -87,6 +97,8 @@ export function loadSave(): SaveData {
       turbo: typeof parsed.turbo === 'boolean' ? parsed.turbo : base.turbo,
       music: typeof parsed.music === 'boolean' ? parsed.music : base.music,
       sound: typeof parsed.sound === 'boolean' ? parsed.sound : base.sound,
+      musicVolume:
+        typeof parsed.musicVolume === 'number' ? parsed.musicVolume : base.musicVolume,
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
       belt: { ...base.belt, ...(parsed.belt ?? {}) },
       sticky: Array.isArray(parsed.sticky) ? parsed.sticky : [],
