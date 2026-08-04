@@ -64,6 +64,25 @@ export class Mascot {
     this.startBreathing();
   }
 
+  /**
+   * Меняет фигуру: VAN в основной комнате, BILLY на троне в бонусной.
+   *
+   * Место фигуры задаётся вместе с текстурой, а не берётся прежним: трон
+   * ниже и шире стоящего в полный рост VAN, и в его прямоугольник не садится.
+   */
+  setFigure(texture: Texture, box: MascotBox): void {
+    this.sprite.texture = texture;
+    this.scaleX = box.w / texture.width;
+    this.scaleY = box.h / texture.height;
+    this.view.position.set(box.x + box.w / 2, box.y + box.h);
+    // Наклон и подскок от прошлой реакции остаются на спрайте: своё «дыхание»
+    // новая фигура начинает с чистого листа, а не с чужого поворота.
+    this.sprite.angle = 0;
+    this.sprite.y = 0;
+    this.mood = 'idle';
+    this.startBreathing();
+  }
+
   private startBreathing(): void {
     this.breath?.kill();
     this.sprite.scale.set(this.scaleX, this.scaleY);

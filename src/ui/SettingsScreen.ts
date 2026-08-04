@@ -1,15 +1,22 @@
-import { Container, Graphics, Rectangle, Text } from 'pixi.js';
-import { AUTO_ROUNDS } from '../game/rules';
+import { Container, Graphics, Rectangle, Sprite, Text, type Texture } from 'pixi.js';
+import { MENU_SCREEN } from '../game/layout';
 import { COLOR } from '../game/palette';
 import { rankFor, type Stats } from '../state/save';
-import { Button, Slider, label } from './widgets';
+import { HotZone } from './HotZone';
+import { Slider, label } from './widgets';
 
 /**
  * Настройки и личная статистика.
  *
- * Раньше шестерёнка открывала правила — то есть делала ровно то же, что «?»
- * рядом с ней. Кнопке нужно своё содержание: переключатели, статистика
- * и единственное необратимое действие в игре — сброс прогресса.
+ * Экран — готовая картинка из набора (menu-screen.png): рамка, заголовки,
+ * подписи, пояснения и три кнопки нарисованы на ней. Движок кладёт поверх
+ * только то, что меняется: громкость числом, ползунок и колонку значений
+ * статистики. Запечённые значения при подготовке погашены
+ * (tools/prep_screens.py), поэтому под живыми числами ничего не просвечивает.
+ *
+ * Координаты ниже — в системе самой картинки (1215x1295), а не сцены. Так их
+ * можно снять с файла линейкой и не пересчитывать, если панель на сцене
+ * поедет или сменит размер: пересчёт делает `at()`.
  */
 
 export interface SettingsState {
@@ -20,6 +27,29 @@ export interface SettingsState {
   balance: number;
 }
 
+/** Кнопки, нарисованные на картинке. */
+const TURBO_AT = { x: 72, y: 138, w: 319, h: 107 } as const;
+const RESET_AT = { x: 72, y: 1121, w: 409, h: 97 } as const;
+const CLOSE_AT = { x: 812, y: 1121, w: 321, h: 97 } as const;
+
+/**
+ * Ползунок громкости. На картинке нарисована только заполненная часть
+ * дорожки — от 77 до 332 при 35%, отсюда полная длина 728.
+ */
+const SLIDER_AT = { x: 77, y: 360, w: 728 } as const;
+const VOLUME_AT = { right: 1130, y: 300 } as const;
+
+/**
+ * Колонка значений статистики. Шаг строк 48.15 снят по первой и последней
+ * подписи, а не подобран на глаз.
+ *
+ * Ранг стоит левее прочих: подпись у него короткая, и на картинке значение
+ * начиналось сразу за ней.
+ */
+const STATS_AT = { x: 349, rankX: 259, top: 671, step: 48.15 } as const;
+
+type Box = { x: number; y: number; w: number; h: number };
+
 export class SettingsScreen {
   readonly view = new Container();
 
@@ -27,15 +57,18 @@ export class SettingsScreen {
   onVolume: ((value: number) => void) | null = null;
   onReset: (() => void) | null = null;
 
-  private readonly statsText: Text;
-  private readonly turboButton: Button;
-  private readonly volumeSlider: Slider;
+  private readonly panel = new Container();
+  private readonly values: Text[] = [];
   private readonly volumeValue: Text;
-  private readonly resetButton: Button;
+  private readonly volumeSlider: Slider;
+  private readonly turboOff = new Graphics();
+  private readonly confirm = new Container();
+  private readonly scale: number;
   private resetArmed = false;
 
-  constructor(width: number, height: number) {
+  constructor(width: number, height: number, art: Texture) {
     this.view.visible = false;
+    this.scale = MENU_SCREEN.w / art.width;
 
     const shade = new Graphics();
     shade.rect(0, 0, width, height).fill({ color: 0x0a0510, alpha: 0.93 });
@@ -44,142 +77,126 @@ export class SettingsScreen {
     shade.on('pointertap', () => this.hide());
     this.view.addChild(shade);
 
-    const panelW = 760;
-    // Высота считается от содержимого: три раздела с пояснениями, девять строк
-    // статистики и ряд кнопок. При 560 последняя строка уезжала под кнопку
-    // сброса, при 726 — не влезал добавленный ползунок громкости.
-    const panelH = 820;
-    const panel = new Container();
-    panel.position.set((width - panelW) / 2, (height - panelH) / 2);
-    panel.eventMode = 'static';
-    panel.hitArea = new Rectangle(0, 0, panelW, panelH);
-    this.view.addChild(panel);
+    this.panel.position.set(MENU_SCREEN.x, MENU_SCREEN.y);
+    this.view.addChild(this.panel);
 
-    const bg = new Graphics();
-    bg.roundRect(0, 0, panelW, panelH, 18).fill(COLOR.dim);
-    bg.roundRect(0, 0, panelW, panelH, 18).stroke({ color: COLOR.brick, width: 5 });
-    panel.addChild(bg);
+    const backdrop = new Sprite(art);
+    backdrop.width = MENU_SCREEN.w;
+    backdrop.height = MENU_SCREEN.h;
+    // Панель перехватывает клики: иначе промах мимо кнопки закрывал бы экран.
+    backdrop.eventMode = 'static';
+    this.panel.addChild(backdrop);
 
-    const title = label('НАСТРОЙКИ', 38, COLOR.gold);
-    title.position.set(36, 28);
-    panel.addChild(title);
+    // Выключенное турбо: на картинке кнопка горит всегда, погасить её можно
+    // только сверху. Затемнение, а не своя кнопка поверх: своя была бы
+    // копией нарисованной, и хуже неё.
+    const [tx, ty, tw, th] = this.local(TURBO_AT);
+    this.turboOff.roundRect(tx, ty, tw, th, 10).fill({ color: 0x0a0510, alpha: 0.62 });
+    this.panel.addChild(this.turboOff);
 
-    this.turboButton = new Button({
-      text: 'ТУРБО',
-      width: 190,
-      height: 56,
-      fontSize: 22,
-      onTap: () => this.onToggleTurbo?.(),
-    });
-    this.turboButton.view.position.set(36, 92);
-    panel.addChild(this.turboButton.view);
+    this.panel.addChild(
+      new HotZone(this.rect(TURBO_AT), () => this.onToggleTurbo?.()).view,
+      new HotZone(this.rect(RESET_AT), () => this.handleReset(), 0xc0553c).view,
+      new HotZone(this.rect(CLOSE_AT), () => this.hide(), 0xb96ce0).view,
+    );
 
-    const turboNote = label('Ускоряет барабаны и показ выигрыша.', 17, 0x9a8aaa);
-    turboNote.position.set(246, 110);
-    panel.addChild(turboNote);
-
-    // Громкость музыки. Кнопка «нота» в нижнем ряду только включает и выключает
-    // её целиком; тише или громче сделать было нечем, а музыка играет постоянно.
-    const volumeTitle = label('ГРОМКОСТЬ МУЗЫКИ', 22, COLOR.gold);
-    volumeTitle.position.set(36, 172);
-    panel.addChild(volumeTitle);
-
-    this.volumeValue = label('', 20, COLOR.paper);
+    this.volumeValue = label('', this.size(34), COLOR.gold);
     this.volumeValue.anchor.set(1, 0.5);
-    this.volumeValue.position.set(panelW - 36, 183);
-    panel.addChild(this.volumeValue);
+    this.volumeValue.position.set(this.at(VOLUME_AT.right), this.at(VOLUME_AT.y));
+    this.panel.addChild(this.volumeValue);
 
     this.volumeSlider = new Slider({
-      width: 420,
+      width: this.at(SLIDER_AT.w),
       value: 0,
       onChange: (v) => {
         this.volumeValue.text = `${Math.round(v * 100)}%`;
         this.onVolume?.(v);
       },
     });
-    this.volumeSlider.view.position.set(36, 224);
-    panel.addChild(this.volumeSlider.view);
+    this.volumeSlider.view.position.set(this.at(SLIDER_AT.x), this.at(SLIDER_AT.y));
+    this.panel.addChild(this.volumeSlider.view);
 
-    // Про автоспин игрок иначе не узнает: кнопка «АВТО» не объясняет,
-    // сколько раундов она запускает и как её остановить.
-    const autoTitle = label('АВТО', 22, COLOR.gold);
-    autoTitle.position.set(36, 262);
-    panel.addChild(autoTitle);
+    for (let i = 0; i < 9; i++) {
+      const value = label('', this.size(30), COLOR.paper);
+      value.anchor.set(0, 0.5);
+      value.position.set(
+        this.at(i === 0 ? STATS_AT.rankX : STATS_AT.x),
+        this.at(STATS_AT.top + STATS_AT.step * i),
+      );
+      this.values.push(value);
+      this.panel.addChild(value);
+    }
 
-    const autoNote = label(
-      `Крутит ${AUTO_ROUNDS} раундов подряд. Повторное нажатие останавливает\n` +
-        'после текущего раунда. Автоспин сам встанет, если кончатся монеты.',
-      17,
-      0x9a8aaa,
-      { lineHeight: 24 },
-    );
-    autoNote.position.set(36, 292);
-    panel.addChild(autoNote);
-
-    const statsTitle = label('ТВОЯ СТАТИСТИКА', 22, COLOR.cyan);
-    statsTitle.position.set(36, 356);
-    panel.addChild(statsTitle);
-
-    this.statsText = label('', 19, COLOR.paper, { lineHeight: 30 });
-    this.statsText.position.set(36, 396);
-    panel.addChild(this.statsText);
-
-    this.resetButton = new Button({
-      text: 'НАЧАТЬ ЗАНОВО',
-      width: 260,
-      height: 56,
-      fontSize: 20,
-      color: 0x7a2a2a,
-      onTap: () => this.handleReset(),
+    // Подтверждение сброса закрывает собой нарисованную подпись кнопки.
+    this.confirm.visible = false;
+    const [rx, ry, rw, rh] = this.local(RESET_AT);
+    const backing = new Graphics().roundRect(rx, ry, rw, rh, 10).fill({
+      color: 0x1a0c10,
+      alpha: 0.94,
     });
-    this.resetButton.view.position.set(36, panelH - 88);
-    panel.addChild(this.resetButton.view);
+    const confirmText = label('ТОЧНО? ЖМИ ЕЩЁ РАЗ', this.size(30), 0xe8b6a2);
+    confirmText.anchor.set(0.5, 0.5);
+    confirmText.position.set(rx + rw / 2, ry + rh / 2);
+    this.confirm.addChild(backing, confirmText);
+    this.panel.addChild(this.confirm);
+  }
 
-    const close = new Button({
-      text: 'ЗАКРЫТЬ',
-      width: 180,
-      height: 56,
-      fontSize: 22,
-      color: COLOR.neon,
-      onTap: () => this.hide(),
-    });
-    close.view.position.set(panelW - 216, panelH - 88);
-    panel.addChild(close.view);
+  /** Координата картинки → координата внутри панели. */
+  private at(value: number): number {
+    return value * this.scale;
+  }
+
+  /** Кегль, заданный по картинке, → кегль на сцене. */
+  private size(value: number): number {
+    return Math.round(value * this.scale);
+  }
+
+  /** Прямоугольник картинки → прямоугольник внутри панели. */
+  private local(box: Box): [number, number, number, number] {
+    return [this.at(box.x), this.at(box.y), this.at(box.w), this.at(box.h)];
+  }
+
+  /** Прямоугольник картинки → прямоугольник на сцене (зоны живут вне панели). */
+  private rect(box: Box): [number, number, number, number] {
+    const [x, y, w, h] = this.local(box);
+    return [MENU_SCREEN.x + x, MENU_SCREEN.y + y, w, h];
   }
 
   /** Сброс требует второго нажатия: отменить его потом будет нечем. */
   private handleReset(): void {
     if (!this.resetArmed) {
       this.resetArmed = true;
-      this.resetButton.setText('ТОЧНО? ЖМИ ЕЩЁ РАЗ');
+      this.confirm.visible = true;
       return;
     }
     this.resetArmed = false;
-    this.resetButton.setText('НАЧАТЬ ЗАНОВО');
+    this.confirm.visible = false;
     this.onReset?.();
     this.hide();
   }
 
   show(state: SettingsState): void {
     this.resetArmed = false;
-    this.resetButton.setText('НАЧАТЬ ЗАНОВО');
-    this.turboButton.setActive(state.turbo);
+    this.confirm.visible = false;
+    this.turboOff.visible = !state.turbo;
     this.volumeSlider.setValue(state.volume);
     this.volumeValue.text = `${Math.round(state.volume * 100)}%`;
 
     const s = state.stats;
+    const rank = rankFor(s.wagered);
     const rtp = s.wagered > 0 ? ((s.won / s.wagered) * 100).toFixed(1) + '%' : '—';
-    this.statsText.text = [
-      `Ранг:              ${rankFor(s.wagered).title} — ${rankFor(s.wagered).ru}`,
-      `Раундов сыграно:   ${s.rounds.toLocaleString('ru-RU')}`,
-      `Поставлено:        ${s.wagered.toLocaleString('ru-RU')}`,
-      `Выиграно:          ${s.won.toLocaleString('ru-RU')}`,
-      `Твой возврат:      ${rtp}`,
-      `Лучший занос:      ×${s.bestWinX.toFixed(2)}`,
-      `Худшая сушь:       ${s.worstDry} спинов подряд`,
-      `Заходов в бонус:   ${s.freeRounds}`,
-      `Доливов монет:     ${s.topUps ?? 0}`,
-    ].join('\n');
+    const lines = [
+      `${rank.title} — ${rank.ru}`,
+      s.rounds.toLocaleString('ru-RU'),
+      s.wagered.toLocaleString('ru-RU'),
+      s.won.toLocaleString('ru-RU'),
+      rtp,
+      `×${s.bestWinX.toFixed(2)}`,
+      `${s.worstDry} спинов подряд`,
+      String(s.freeRounds),
+      String(s.topUps ?? 0),
+    ];
+    for (const [i, text] of lines.entries()) this.values[i].text = text;
 
     this.view.visible = true;
   }

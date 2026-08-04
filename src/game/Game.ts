@@ -24,6 +24,13 @@ import { createRng } from '../core/rng';
 import { drawGrid } from '../core/spin';
 import { Sym, type CollectWin, type LineWin } from '../core/types';
 import backgroundUrl from '../assets/ui/background.png';
+import bonusRoomUrl from '../assets/ui/bonus-room.png';
+import bossUrl from '../assets/ui/boss-throne.png';
+import dungeonRoomUrl from '../assets/ui/dungeon-entrance.png';
+import dungeonDoorUrl from '../assets/ui/dungeon-door.png';
+import oilPanelUrl from '../assets/ui/oil-panel.png';
+import rulesScreenUrl from '../assets/ui/rules-screen.png';
+import menuScreenUrl from '../assets/ui/menu-screen.png';
 import vanUrl from '../assets/ui/van-stand.png';
 import logoUrl from '../assets/ui/logo.png';
 import signUrl from '../assets/ui/sign-van.png';
@@ -54,7 +61,9 @@ import { TopUpScreen } from '../ui/TopUpScreen';
 import { label } from '../ui/widgets';
 import { BeltStrip } from './BeltStrip';
 import { BigWinBanner } from './BigWinBanner';
+import { DungeonEntrance } from './DungeonEntrance';
 import {
+  BOSS_AT,
   BUTTONS,
   COIN,
   INFO,
@@ -66,6 +75,7 @@ import {
   MONEY_PANEL,
   STEPPER_PANEL,
   OIL_BAR,
+  OIL_PANEL,
   PANEL_TOP,
   REELS_AT,
   SIGN_AT,
@@ -74,13 +84,13 @@ import {
   STAGE_W,
   VAN_AT,
 } from './layout';
-import { Mascot } from './Mascot';
-import { music } from './music';
+import { Mascot, type MascotBox } from './Mascot';
+import { music, type Theme } from './music';
 import { sound } from './sound';
 import { COLOR } from './palette';
 import { ReelDividers } from './ReelDividers';
 import { ReelSet } from './ReelSet';
-import { AUTO_ROUNDS, BET_LEVELS, RTP_LABEL } from './rules';
+import { AUTO_ROUNDS, BET_LEVELS } from './rules';
 import { StickyOverlay } from './StickyOverlay';
 import { loadSymbolArt } from './symbolTextures';
 import { pause, timing, TURBO_SPEED } from './timing';
@@ -109,6 +119,26 @@ const INFO_CELLS = new Set(['tokens', 'sticky', 'dry', 'betCoins', 'buyCoins']);
 /** Ниже этого числа ставок пополнение начинает мигать. */
 const LOW_BALANCE = 1;
 
+/**
+ * Комнаты. Их две, и различаются они ровно тремя вещами: картинкой фона,
+ * фигурой в слоте маскота и темой музыки. Всё остальное — рамка барабанов,
+ * панели, кнопки, координаты из layout.ts — у них общее, потому что фон
+ * бонусной комнаты собран вокруг той же рамки (tools/prep_bonus_room.py).
+ *
+ * Из-за этого переключение стоит подмены двух текстур, и не приходится
+ * держать вторую раскладку экрана со своими координатами для каждого числа.
+ */
+type Room = 'main' | 'bonus';
+
+interface RoomArt {
+  /** Фон целиком и его нижняя полоса отдельной рамкой — она идёт поверх маскота. */
+  plate: Texture;
+  floor: Texture;
+  figure: Texture;
+  figureBox: MascotBox;
+  theme: Theme;
+}
+
 export class Game {
   private readonly app = new Application();
   private readonly rng = createRng();
@@ -127,6 +157,16 @@ export class Game {
   private doors!: DoorScreen;
   private topUp!: TopUpScreen;
   private settings!: SettingsScreen;
+  private entrance!: DungeonEntrance;
+
+  /** Две комнаты одной сцены: обстановка меняется, интерфейс остаётся на месте. */
+  private rooms!: Record<Room, RoomArt>;
+  private room: Room = 'main';
+  /** Фон и его же низ вторым слоем поверх маскота — оба меняются вместе. */
+  private bg!: Sprite;
+  private floorLine!: Sprite;
+  /** Обстановка только основной комнаты: в подземелье её нет. */
+  private mainProps: Sprite[] = [];
 
   private banner!: Container;
   private bannerText!: Text;
@@ -215,6 +255,10 @@ export class Game {
 
     const [
       background,
+      bonusRoomTexture,
+      bossTexture,
+      dungeonRoomTexture,
+      dungeonDoorTexture,
       vanTexture,
       logoTexture,
       signTexture,
@@ -227,9 +271,16 @@ export class Game {
       moneyTexture,
       stepperTexture,
       infoTexture,
+      oilPanelTexture,
+      rulesScreenTexture,
+      menuScreenTexture,
       coinTexture,
     ] = await Promise.all([
       Assets.load<Texture>(backgroundUrl),
+      Assets.load<Texture>(bonusRoomUrl),
+      Assets.load<Texture>(bossUrl),
+      Assets.load<Texture>(dungeonRoomUrl),
+      Assets.load<Texture>(dungeonDoorUrl),
       Assets.load<Texture>(vanUrl),
       Assets.load<Texture>(logoUrl),
       Assets.load<Texture>(signUrl),
@@ -242,16 +293,44 @@ export class Game {
       Assets.load<Texture>(moneyPanelUrl),
       Assets.load<Texture>(stepperPanelUrl),
       Assets.load<Texture>(infoPanelUrl),
+      Assets.load<Texture>(oilPanelUrl),
+      Assets.load<Texture>(rulesScreenUrl),
+      Assets.load<Texture>(menuScreenUrl),
       Assets.load<Texture>(coinUrl),
     ]);
     coinTexture.source.scaleMode = 'nearest';
     this.coinTexture = coinTexture;
     const art = await loadSymbolArt(this.app.renderer);
 
-    const bg = new Sprite(background);
-    bg.width = STAGE_W;
-    bg.height = STAGE_H;
-    this.app.stage.addChild(bg);
+    // Низ фона рисуется вторым слоем поверх маскота (см. floorLine ниже),
+    // поэтому у каждой комнаты своя пара: вся картинка и её нижняя полоса.
+    const floorFrame = (texture: Texture) =>
+      new Texture({
+        source: texture.source,
+        frame: new Rectangle(0, PANEL_TOP, STAGE_W, STAGE_H - PANEL_TOP),
+      });
+
+    this.rooms = {
+      main: {
+        plate: background,
+        floor: floorFrame(background),
+        figure: vanTexture,
+        figureBox: VAN_AT,
+        theme: 'main',
+      },
+      bonus: {
+        plate: bonusRoomTexture,
+        floor: floorFrame(bonusRoomTexture),
+        figure: bossTexture,
+        figureBox: BOSS_AT,
+        theme: 'bonus',
+      },
+    };
+
+    this.bg = new Sprite(background);
+    this.bg.width = STAGE_W;
+    this.bg.height = STAGE_H;
+    this.app.stage.addChild(this.bg);
 
     // Новый логотип ложится ровно на старый, запечённый в фон.
     //
@@ -283,6 +362,12 @@ export class Game {
     still.position.set(TABLE_AT.x, TABLE_AT.y - still.height);
     this.app.stage.addChild(still);
 
+    // Обстановка основной комнаты. Табличка с именем VAN и его тумба — потому
+    // что в подземелье у стены сидит другой хозяин, и его именем эти вещи
+    // не подписать. Заголовок игры — потому что на его месте в бонусной комнате
+    // горит своя вывеска «NO EXCUSES», и вдвоём они спорят за один угол.
+    this.mainProps = [logo, sign, still];
+
     this.mascot = new Mascot(vanTexture, VAN_AT);
     this.app.stage.addChild(this.mascot.view);
 
@@ -291,14 +376,9 @@ export class Game {
     // комнаты, а не на панели: без этого слоя его ноги лежали бы поверх
     // «БАЛАНС / СТАВКА / ВЫИГРЫШ». Спрайт при этом можно строить в полный
     // рост и не подгонять его высоту под верхний край панели.
-    const floorLine = new Sprite(
-      new Texture({
-        source: background.source,
-        frame: new Rectangle(0, PANEL_TOP, STAGE_W, STAGE_H - PANEL_TOP),
-      }),
-    );
-    floorLine.position.set(0, PANEL_TOP);
-    this.app.stage.addChild(floorLine);
+    this.floorLine = new Sprite(this.rooms.main.floor);
+    this.floorLine.position.set(0, PANEL_TOP);
+    this.app.stage.addChild(this.floorLine);
 
     this.reels = new ReelSet(art.textures, REELS_BASE);
     this.reels.onReelStop = () => sound.reelStop();
@@ -351,6 +431,14 @@ export class Game {
     bottomBar.height = BOTTOM_BAR.h;
     this.app.stage.addChild(bottomBar);
 
+    // Секция «OIL UP» отдельной панелью поверх полосы: у неё чистая ячейка
+    // счётчика, а у нарисованной на полосе — след от гашения запечённой цифры.
+    const oilPanel = new Sprite(oilPanelTexture);
+    oilPanel.position.set(OIL_PANEL.x, OIL_PANEL.y);
+    oilPanel.width = OIL_PANEL.w;
+    oilPanel.height = OIL_PANEL.h;
+    this.app.stage.addChild(oilPanel);
+
     this.belt = new BeltStrip();
     this.app.stage.addChild(this.belt.view);
 
@@ -364,13 +452,13 @@ export class Game {
     this.bigWin = new BigWinBanner();
     this.app.stage.addChild(this.bigWin.view);
 
-    this.rules = new PaytableScreen(STAGE_W, STAGE_H, RTP_LABEL);
+    this.rules = new PaytableScreen(STAGE_W, STAGE_H, rulesScreenTexture);
     this.app.stage.addChild(this.rules.view);
     this.doors = new DoorScreen(STAGE_W, STAGE_H);
     this.app.stage.addChild(this.doors.view);
     this.topUp = new TopUpScreen(STAGE_W, STAGE_H);
     this.app.stage.addChild(this.topUp.view);
-    this.settings = new SettingsScreen(STAGE_W, STAGE_H);
+    this.settings = new SettingsScreen(STAGE_W, STAGE_H, menuScreenTexture);
     this.settings.onToggleTurbo = () => {
       this.toggleTurbo();
       this.settings.show({ turbo: timing.speed > 1, volume: music.level, stats: this.stats, balance: this.balance });
@@ -381,6 +469,11 @@ export class Game {
     };
     this.settings.onReset = () => this.resetProgress();
     this.app.stage.addChild(this.settings.view);
+
+    // Последним слоем: сцена входа накрывает собой всё, включая баннеры
+    // и экраны. Пока она на экране, игра ничего не ждёт от игрока.
+    this.entrance = new DungeonEntrance(dungeonRoomTexture, dungeonDoorTexture);
+    this.app.stage.addChild(this.entrance.view);
 
     this.restoreBoard();
     this.refreshAll();
@@ -399,6 +492,31 @@ export class Game {
 
     this.app.ticker.add((ticker) => this.reels.update(ticker.deltaMS / 1000));
     window.addEventListener('keydown', (e) => this.onKey(e));
+  }
+
+  /**
+   * Переводит сцену в другую комнату.
+   *
+   * Меняются три вещи: картинка фона (вместе с её нижней полосой), фигура
+   * в слоте маскота и тема музыки. Координаты не трогаются вовсе — фон
+   * бонусной комнаты собран вокруг той же рамки барабанов и той же полосы,
+   * что и основной, поэтому весь интерфейс остаётся на своих местах.
+   *
+   * Вызывать только под затемнением: подмена мгновенная, и в открытом кадре
+   * она читается как сбой.
+   */
+  private setRoom(room: Room): void {
+    if (this.room === room) return;
+    this.room = room;
+
+    const art = this.rooms[room];
+    this.bg.texture = art.plate;
+    this.bg.width = STAGE_W;
+    this.bg.height = STAGE_H;
+    this.floorLine.texture = art.floor;
+    this.mascot.setFigure(art.figure, art.figureBox);
+    for (const prop of this.mainProps) prop.visible = room === 'main';
+    music.play(art.theme);
   }
 
   /** Канвас вписывается в окно целиком, сохраняя пропорции макета. */
@@ -564,6 +682,9 @@ export class Game {
     this.reels.setGrid(grid);
     this.stickyOverlay.update(this.state.sticky, 'base');
     this.belt.set(this.state.belt.tokens);
+    // Поле набрано случайное, цепей на нём не считали — счётчик показывает ноль,
+    // а не пустую ячейку: пустая читается сломанной панелью, а не нулём.
+    this.setText('oil', '0');
   }
 
   // ── Управление ──────────────────────────────────────────────
@@ -765,6 +886,14 @@ export class Game {
       // Дверь либо уже выбрана при покупке, либо спрашивается сейчас — и тогда
       // отказаться нельзя: раунд оплачен обычной ставкой.
       const door = boughtDoor ?? (await this.doors.choose(false)) ?? DOORS[1].id;
+
+      // Сначала игрок туда доходит. Экран гаснет, из темноты проявляется
+      // вход, дверь открывается — и только за ней комната подменяется на
+      // бонусную. Подмена под затемнением, в открытом кадре её не бывает.
+      await this.entrance.enter();
+      this.setRoom('bonus');
+      await this.entrance.reveal();
+
       const freeLog: RoundEvent[] = [];
       freeSpinsPlayed = playFree({
         rng: this.rng,
@@ -774,6 +903,9 @@ export class Game {
         log: freeLog,
       });
       await this.playLog(freeLog);
+
+      // Обратно — просто затемнением: из подземелья выходят не через дверь.
+      await this.entrance.swap(() => this.setRoom('main'));
     }
 
     const result = finishRound(parts, {
