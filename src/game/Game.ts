@@ -28,7 +28,7 @@ import vanUrl from '../assets/ui/van-stand.png';
 import logoUrl from '../assets/ui/logo.png';
 import signUrl from '../assets/ui/sign-van.png';
 import tableUrl from '../assets/ui/table-still.png';
-import ticketPanelUrl from '../assets/ui/ticket-panel.png';
+import bottomBarUrl from '../assets/ui/bottom-bar.png';
 import skipUrl from '../assets/ui/skip-button.png';
 import turboUrl from '../assets/ui/turbo-button.png';
 import autoUrl from '../assets/ui/auto-button.png';
@@ -57,10 +57,9 @@ import { BigWinBanner } from './BigWinBanner';
 import {
   BUTTONS,
   COIN,
-  FIST_LABEL,
   INFO,
   LOGO_AT,
-  TICKET_PANEL,
+  BOTTOM_BAR,
   ROW_BUTTONS,
   INFO_PANEL,
   MONEY,
@@ -220,7 +219,7 @@ export class Game {
       logoTexture,
       signTexture,
       tableTexture,
-      ticketTexture,
+      bottomBarTexture,
       skipTexture,
       turboTexture,
       autoTexture,
@@ -235,7 +234,7 @@ export class Game {
       Assets.load<Texture>(logoUrl),
       Assets.load<Texture>(signUrl),
       Assets.load<Texture>(tableUrl),
-      Assets.load<Texture>(ticketPanelUrl),
+      Assets.load<Texture>(bottomBarUrl),
       Assets.load<Texture>(skipUrl),
       Assets.load<Texture>(turboUrl),
       Assets.load<Texture>(autoUrl),
@@ -344,12 +343,13 @@ export class Game {
     // строчка размечает ячейки, а не лежит решёткой поверх игры.
     this.reels.view.addChildAt(new ReelDividers().view, 1);
 
-    // Панель накопителя целиком: рамка, заголовок и три билета одним рисунком.
-    const ticketPanel = new Sprite(ticketTexture);
-    ticketPanel.position.set(TICKET_PANEL.x, TICKET_PANEL.y);
-    ticketPanel.width = TICKET_PANEL.w;
-    ticketPanel.height = TICKET_PANEL.h;
-    this.app.stage.addChild(ticketPanel);
+    // Правая половина нижней полосы одним рисунком: накопитель, «OIL UP»
+    // и шкала «VAN'S FIST» на общем фоне.
+    const bottomBar = new Sprite(bottomBarTexture);
+    bottomBar.position.set(BOTTOM_BAR.x, BOTTOM_BAR.y);
+    bottomBar.width = BOTTOM_BAR.w;
+    bottomBar.height = BOTTOM_BAR.h;
+    this.app.stage.addChild(bottomBar);
 
     this.belt = new BeltStrip();
     this.app.stage.addChild(this.belt.view);
@@ -462,13 +462,6 @@ export class Game {
     stepper.anchor.set(0.5, 0.5);
     stepper.position.set(MONEY.stepper.x, MONEY.stepper.y);
     this.put('stepper', stepper);
-
-    // Подпись шкалы в нижней полосе — там, где на макете было «DUKE'S FIST».
-    // Цвет снят с соседних запечённых подписей («BELT COLLECTION», «OIL UP»),
-    // иначе одна надпись в ряду светится ярче остальных.
-    const fist = label("VAN'S FIST", FIST_LABEL.size, 0xc08b2e, { letterSpacing: 1 });
-    fist.position.set(FIST_LABEL.x, FIST_LABEL.y);
-    this.app.stage.addChild(fist);
 
     this.buildInfoPanel();
 
