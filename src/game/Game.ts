@@ -36,13 +36,6 @@ import rulesScreenUrl from '../assets/ui/rules-screen.png';
 import menuScreenUrl from '../assets/ui/menu-screen.png';
 import choiceScreenUrl from '../assets/ui/choice-screen.png';
 import topupScreenUrl from '../assets/ui/topup-screen.png';
-import coinBronzeUrl from '../assets/ui/coin-bronze.png';
-import coinSilverUrl from '../assets/ui/coin-silver.png';
-import coinGoldUrl from '../assets/ui/coin-gold.png';
-import coinDiamondUrl from '../assets/ui/coin-diamond.png';
-import coinFistUrl from '../assets/ui/coin-fist.png';
-import coinPumpUrl from '../assets/ui/coin-pump.png';
-import coinMultUrl from '../assets/ui/coin-mult.png';
 import vanUrl from '../assets/ui/van-stand.png';
 import logoUrl from '../assets/ui/logo.png';
 import signUrl from '../assets/ui/sign-van.png';
@@ -74,6 +67,7 @@ import { label } from '../ui/widgets';
 import { BeltStrip } from './BeltStrip';
 import { BigWinBanner } from './BigWinBanner';
 import { CoinField } from './CoinField';
+import { loadCoinArt } from './coinTextures';
 import { DungeonEntrance } from './DungeonEntrance';
 import {
   BOSS_AT,
@@ -415,24 +409,7 @@ export class Game {
 
     // Поле монетного бонуса — поверх барабанов: на время OIL RUSH барабаны
     // прячутся целиком, это отдельная игра на том же экране.
-    const [bronze, silver, gold, diamond, fistCoin, pumpCoin, multCoin] = await Promise.all([
-      Assets.load<Texture>(coinBronzeUrl),
-      Assets.load<Texture>(coinSilverUrl),
-      Assets.load<Texture>(coinGoldUrl),
-      Assets.load<Texture>(coinDiamondUrl),
-      Assets.load<Texture>(coinFistUrl),
-      Assets.load<Texture>(coinPumpUrl),
-      Assets.load<Texture>(coinMultUrl),
-    ]);
-    this.coinField = new CoinField({
-      bronze,
-      silver,
-      gold,
-      diamond,
-      fist: fistCoin,
-      pump: pumpCoin,
-      mult: multCoin,
-    });
+    this.coinField = new CoinField(await loadCoinArt());
     this.app.stage.addChild(this.coinField.view);
 
     // Порядок слоёв: отметки липких ♂ под линиями выплат, иначе рамки спорят.
