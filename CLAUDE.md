@@ -31,8 +31,8 @@ npx tsx tools/simulate.ts --spins 1000000 --seed 7 --door FULL_NELSON --buy
 
 Скрипты подготовки ассетов требуют Python 3 с Pillow, запускаются из корня:
 `prep_background.py фон.png`, `prep_new_assets_1.py`, `prep_bonus_room.py`,
-`prep_dungeon_entrance.py`, `prep_screens.py`, `slice_art.py <лист.png>`,
-`grid_overlay.py фон.png [шаг]`.
+`prep_dungeon_entrance.py`, `prep_screens.py`, `prep_coin_field.py`,
+`slice_art.py <лист.png>`, `grid_overlay.py фон.png [шаг]`.
 
 ## Архитектура
 
@@ -126,8 +126,14 @@ npx tsx tools/simulate.ts --spins 1000000 --seed 7 --door FULL_NELSON --buy
    десять тысяч спинов не воспроизвести.
 5. Расхождение RTP игры с симулятором означает баг в игровом слое, а не в математике.
 
-Целевые цифры: RTP 95.88%, поле 5×4, 20 линий, hit 26.3%, бонус раз в 200 спинов,
-σ ≈ 15.0, потолок ×5000. Обоснование каждой правки лент и выплат — в [MATH.md](MATH.md).
+Целевые цифры: RTP 96.0%, поле 5×4, 20 линий, hit 26.3%, бонус раз в 200 спинов,
+σ ≈ 14.5, потолок ×5000. Обоснование каждой правки лент и выплат — в [MATH.md](MATH.md).
+
+Бонусов два, и игрок выбирает между ними: FULL NELSON (фриспины, 5 спинов,
+старт ×17) и OIL RUSH (монеты на поле 5×5, `core/features/coinRush.ts`).
+Они сведены к одному матожиданию (×83.4 против ×83.8 на 20 млн раундов);
+`COIN_CHANCE` и `startMult` — ручки этой подгонки, и трогать их можно только
+вместе с прогоном симулятора.
 Концепт и механики — в [DESIGN.md](DESIGN.md), план работ — в [PLAN.md](PLAN.md).
 
 ## Ловушки окружения

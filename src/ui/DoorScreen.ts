@@ -1,34 +1,76 @@
 import gsap from 'gsap';
 import { Container, Graphics, Rectangle } from 'pixi.js';
-import { DOORS, type Door, type DoorId } from '../core/features/freeSpins';
+import { COIN_CELLS, COIN_RESPINS, COIN_VALUES } from '../core/features/coinRush';
+import { DOORS } from '../core/features/freeSpins';
+import type { BonusId } from '../core/round';
 import { COLOR } from '../game/palette';
 import { dur } from '../game/timing';
 import { Button, label } from './widgets';
 
 /**
- * Выбор двери перед фриспинами.
+ * Выбор бонуса перед входом в подземелье.
  *
- * Единственный момент за всю игру, когда игрок на что-то влияет. Все три двери
- * сведены к близкому матожиданию (см. MATH.md), поэтому правильного ответа нет —
- * выбор про темперамент. Экран обязан это доносить: рядом с каждой дверью
- * написано, чем она отличается, и нигде не сказано, какая «лучше».
+ * Единственный момент за всю игру, когда игрок на что-то влияет. Обе двери
+ * сведены к близкому матожиданию симулятором (см. MATH.md), поэтому правильного
+ * ответа нет — выбор про темперамент. Экран обязан это доносить: рядом с каждой
+ * дверью написано, чем она отличается, и нигде не сказано, какая «лучше».
+ *
+ * Дверей было три, и все три вели во фриспины с разной длиной раунда. Замеры
+ * показали разброс матожидания в четыре процентных пункта, то есть выбор был
+ * не про темперамент, а про арифметику. Теперь их две, и они противоположны
+ * по устройству: множитель против накопления.
  */
 
-const CARD_W = 300;
+const CARD_W = 320;
 const CARD_H = 340;
-const GAP = 32;
+const GAP = 48;
 
-/** Чем короче забег, тем горячее цвет — подсказка про характер, а не про выгоду. */
-const CARD_COLOR: Record<DoorId, number> = {
-  ARM_WRESTLE: 0x3f9e7a,
-  SUBMISSION: COLOR.cyan,
-  FULL_NELSON: 0xd4453a,
-};
+/** Крупнейший номинал монеты — на карточке он обещание, а не мелкий шрифт. */
+const TOP_COIN = COIN_VALUES.reduce((m, c) => Math.max(m, c.value), 0);
+
+interface BonusCard {
+  id: BonusId;
+  title: string;
+  subtitle: string;
+  /** Крупное число в середине карточки и подпись под ним. */
+  big: string;
+  bigCap: string;
+  /** Строка про главную ручку бонуса. */
+  line: string;
+  hint: string;
+  color: number;
+}
+
+function cards(): BonusCard[] {
+  const door = DOORS[0];
+  return [
+    {
+      id: door.id,
+      title: door.title,
+      subtitle: 'Всё или ничего',
+      big: String(door.spins),
+      bigCap: 'СПИНОВ',
+      line: `старт ×${door.startMult}`,
+      hint: 'каждый ♂ даёт +1',
+      color: 0xd4453a,
+    },
+    {
+      id: 'OIL_RUSH',
+      title: 'OIL RUSH',
+      subtitle: 'Шаг за шагом',
+      big: String(COIN_CELLS),
+      bigCap: 'КЛЕТОК',
+      line: `монеты до ×${TOP_COIN}`,
+      hint: `новая монета — снова ${COIN_RESPINS} респина`,
+      color: COLOR.cyan,
+    },
+  ];
+}
 
 export class DoorScreen {
   readonly view = new Container();
 
-  private resolve: ((id: DoorId | null) => void) | null = null;
+  private resolve: ((id: BonusId | null) => void) | null = null;
   private readonly cards: Container[] = [];
   private readonly cancelButton: Container;
   /** Можно ли уйти с экрана без выбора. */
@@ -45,20 +87,21 @@ export class DoorScreen {
     shade.on('pointertap', () => this.cancel());
     this.view.addChild(shade);
 
-    const title = label('ВЫБЕРИ ДВЕРЬ', 46, COLOR.gold);
+    const title = label('ВЫБЕРИ БОНУС', 46, COLOR.gold);
     title.anchor.set(0.5, 0);
     title.position.set(width / 2, 92);
     this.view.addChild(title);
 
-    const sub = label('Три пути в подземелье. Ни один не лучше — они просто разные.', 19, 0x9a8aaa);
+    const sub = label('Два пути в подземелье. Ни один не лучше — они просто разные.', 19, 0x9a8aaa);
     sub.anchor.set(0.5, 0);
     sub.position.set(width / 2, 148);
     this.view.addChild(sub);
 
-    const totalW = DOORS.length * CARD_W + (DOORS.length - 1) * GAP;
+    const list = cards();
+    const totalW = list.length * CARD_W + (list.length - 1) * GAP;
     const startX = (width - totalW) / 2;
 
-    for (const [i, door] of DOORS.entries()) {
+    for (const [i, door] of list.entries()) {
       const card = this.buildCard(door);
       card.position.set(startX + i * (CARD_W + GAP), 210);
       this.cards.push(card);
@@ -92,9 +135,9 @@ export class DoorScreen {
     this.cancel();
   }
 
-  private buildCard(door: Door): Container {
+  private buildCard(door: BonusCard): Container {
     const card = new Container();
-    const accent = CARD_COLOR[door.id];
+    const accent = door.color;
 
     const bg = new Graphics();
     bg.roundRect(0, 0, CARD_W, CARD_H, 16).fill(COLOR.dim);
@@ -111,22 +154,22 @@ export class DoorScreen {
     mood.position.set(CARD_W / 2, 66);
     card.addChild(mood);
 
-    const spins = label(String(door.spins), 76, COLOR.paper);
+    const spins = label(door.big, 76, COLOR.paper);
     spins.anchor.set(0.5, 0);
     spins.position.set(CARD_W / 2, 108);
     card.addChild(spins);
 
-    const spinsCap = label('СПИНОВ', 17, 0x9a8aaa);
+    const spinsCap = label(door.bigCap, 17, 0x9a8aaa);
     spinsCap.anchor.set(0.5, 0);
     spinsCap.position.set(CARD_W / 2, 196);
     card.addChild(spinsCap);
 
-    const mult = label(`старт ×${door.startMult}`, 30, COLOR.gold);
+    const mult = label(door.line, 30, COLOR.gold);
     mult.anchor.set(0.5, 0);
     mult.position.set(CARD_W / 2, 230);
     card.addChild(mult);
 
-    const hint = label('каждый ♂ даёт +1', 16, 0x9a8aaa);
+    const hint = label(door.hint, 16, 0x9a8aaa);
     hint.anchor.set(0.5, 0);
     hint.position.set(CARD_W / 2, 272);
     card.addChild(hint);
@@ -158,7 +201,7 @@ export class DoorScreen {
     return holder;
   }
 
-  private pick(id: DoorId): void {
+  private pick(id: BonusId): void {
     const done = this.resolve;
     this.resolve = null;
     this.view.visible = false;
@@ -176,7 +219,7 @@ export class DoorScreen {
    *        уже оплачен ставкой, и уход с экрана означал бы потерю денег.
    * @returns выбранная дверь либо null, если игрок передумал.
    */
-  choose(cancellable = false): Promise<DoorId | null> {
+  choose(cancellable = false): Promise<BonusId | null> {
     this.cancellable = cancellable;
     this.cancelButton.visible = cancellable;
     this.view.visible = true;
@@ -199,7 +242,7 @@ export class DoorScreen {
   }
 
   /** Аварийный выход: выбрать за игрока, если экран нужно закрыть принудительно. */
-  forcePick(id: DoorId): void {
+  forcePick(id: BonusId): void {
     if (this.resolve) this.pick(id);
   }
 

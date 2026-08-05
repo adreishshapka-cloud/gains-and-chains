@@ -42,6 +42,7 @@ let cost = 0;
 let win = 0;
 let winBase = 0;
 let winFree = 0;
+let winCoins = 0;
 let winBelt = 0;
 let winLine = 0;
 let winScatter = 0;
@@ -51,6 +52,8 @@ let stickySum = 0;
 let hits = 0;
 let freeRounds = 0;
 let freeSpinsTotal = 0;
+let coinRounds = 0;
+let coinsTotal = 0;
 let cappedRounds = 0;
 let maxWin = 0;
 
@@ -77,6 +80,7 @@ for (let i = 0; i < SPINS; i++) {
   win += r.win;
   winBase += r.baseWin;
   winFree += r.freeWin;
+  winCoins += r.coinWin;
   winBelt += r.beltWin;
   winLine += r.lineWin;
   winScatter += r.scatterWin;
@@ -101,7 +105,12 @@ for (let i = 0; i < SPINS; i++) {
 
   if (r.enteredFree) {
     freeRounds++;
-    freeSpinsTotal += r.freeSpinsPlayed;
+    if (r.bonus === 'OIL_RUSH') {
+      coinRounds++;
+      coinsTotal += r.coinsCollected;
+    } else {
+      freeSpinsTotal += r.freeSpinsPlayed;
+    }
   }
 
   for (let b = 0; b < hist.length; b++) {
@@ -149,6 +158,7 @@ console.log('  ── RTP ──────────────────
 console.log(`  Общий RTP:      ${pct(rtp)}      цель 96.00%`);
 console.log(`    база          ${pct(winBase / cost).padStart(7)}  ${bar(winBase / win)}`);
 console.log(`    фриспины      ${pct(winFree / cost).padStart(7)}  ${bar(winFree / win)}`);
+console.log(`    монеты        ${pct(winCoins / cost).padStart(7)}  ${bar(winCoins / win)}`);
 console.log(`    жетоны        ${pct(winBelt / cost).padStart(7)}  ${bar(winBelt / win)}`);
 console.log('');
 console.log('  По источникам (без учёта потолка):');
@@ -161,7 +171,17 @@ console.log('');
 console.log('  ── Ритм игры ────────────────────────────────────────────');
 console.log(`  Hit frequency:  ${pct(hits / SPINS)}      цель 27–30%`);
 console.log(`  Вход в бонус:   ${oneIn(freeRounds / SPINS)} раундов   цель 1 / 200`);
-console.log(`  Спинов в бонусе:${(freeSpinsTotal / Math.max(1, freeRounds)).toFixed(1)} в среднем`);
+const fnRounds = freeRounds - coinRounds;
+console.log(`  Спинов в бонусе:${(freeSpinsTotal / Math.max(1, fnRounds)).toFixed(1)} в среднем`);
+console.log(
+  `  Разбивка бонуса:FULL NELSON ${fnRounds.toLocaleString('ru-RU')} заходов, ` +
+    `в среднем ×${(winFree / Math.max(1, fnRounds)).toFixed(1)}`,
+);
+console.log(
+  `                  OIL RUSH    ${coinRounds.toLocaleString('ru-RU')} заходов, ` +
+    `в среднем ×${(winCoins / Math.max(1, coinRounds)).toFixed(1)}, ` +
+    `монет ${(coinsTotal / Math.max(1, coinRounds)).toFixed(1)}`,
+);
 console.log(`  Сухая полоса:   макс ${maxDry} спинов подряд`);
 console.log('');
 console.log('  ── Волатильность ────────────────────────────────────────');

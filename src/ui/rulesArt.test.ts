@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { COIN_COLS, COIN_RESPINS, COIN_ROWS_MAX } from '../core/features/coinRush';
 import { BONUS_BUY_COST, DOORS } from '../core/features/freeSpins';
 import { PAYTABLE, SCATTER_PAY, SCATTER_TRIGGER } from '../core/paytable';
 import { LINES, MAX_WIN_X, STICKY_MULT_LADDER, Sym } from '../core/types';
@@ -66,16 +67,17 @@ describe('числа, нарисованные на экране правил', 
     expect([...STICKY_MULT_LADDER]).toEqual([1, 2, 3]);
   });
 
-  it('двери подземелья', () => {
-    expect(DOORS.map((d) => [d.title, d.spins, d.startMult])).toEqual([
-      ['ARM WRESTLE', 10, 1],
-      ['SUBMISSION', 8, 5],
-      ['FULL NELSON', 5, 18],
-    ]);
+  it('дверь фриспинов', () => {
+    expect(DOORS.map((d) => [d.title, d.spins, d.startMult])).toEqual([['FULL NELSON', 5, 17]]);
+  });
+
+  it('второй бонус: поле, респины, старт', () => {
+    expect(COIN_COLS * COIN_ROWS_MAX).toBe(25);
+    expect(COIN_RESPINS).toBe(3);
   });
 
   it('цена покупки бонуса', () => {
-    expect(BONUS_BUY_COST).toBe(64);
+    expect(BONUS_BUY_COST).toBe(87);
   });
 });
 

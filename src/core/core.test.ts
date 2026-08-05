@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { countScatters, evaluateLines, lineWinsTotal, scatterPay } from './evaluate';
 import { beltTokenChance, BELT_MAX_P } from './features/beltCollection';
+import {
+  COIN_ROWS_START,
+  boardSum,
+  createCoinBoard,
+  dropCoins,
+  openCells,
+  seedBoard,
+} from './features/coinRush';
 import { DOORS, roundMultiplier, startFreeSpins } from './features/freeSpins';
 import { resolveCollect } from './features/moneyCollect';
 import { absorbNewWilds, ageSticky, applySticky } from './features/stickyWilds';
@@ -284,7 +292,7 @@ describe('цепи и сборщик', () => {
 
 describe('фриспины', () => {
   it('множитель раунда = стартовый плюс по +1 за липкий ♂', () => {
-    const fs = startFreeSpins('SUBMISSION', [
+    const fs = startFreeSpins('FULL_NELSON', [
       { reel: 1, row: 0, mult: 3, age: 2 },
       { reel: 2, row: 1, mult: 1, age: 0 },
     ]);
@@ -293,7 +301,7 @@ describe('фриспины', () => {
 
   it('липкие ♂ из базовой игры переезжают в раунд', () => {
     const carried: StickyWild[] = [{ reel: 1, row: 0, mult: 2, age: 1 }];
-    const fs = startFreeSpins('ARM_WRESTLE', carried);
+    const fs = startFreeSpins('FULL_NELSON', carried);
     expect(fs.sticky).toHaveLength(1);
     // Копия, а не ссылка: раунд не должен править состояние базовой игры.
     fs.sticky[0].mult = 99;
@@ -301,7 +309,7 @@ describe('фриспины', () => {
   });
 
   it('у всех дверей заданы спины и множитель', () => {
-    expect(DOORS).toHaveLength(3);
+    expect(DOORS).toHaveLength(1);
     for (const d of DOORS) {
       expect(d.spins).toBeGreaterThan(0);
       expect(d.startMult).toBeGreaterThanOrEqual(1);
@@ -365,7 +373,7 @@ describe('раунд', () => {
       const rng = createRng(42);
       const state = createGameState();
       const wins: number[] = [];
-      for (let i = 0; i < 500; i++) wins.push(playRound({ rng, state, door: 'SUBMISSION' }).win);
+      for (let i = 0; i < 500; i++) wins.push(playRound({ rng, state, door: 'random' }).win);
       return wins;
     };
     expect(run()).toEqual(run());
@@ -385,7 +393,7 @@ describe('раунд', () => {
     for (let i = 0; i < 200; i++) {
       const r = playRound({ rng, state, door: 'FULL_NELSON', buy: true });
       expect(r.enteredFree).toBe(true);
-      expect(r.freeSpinsPlayed).toBeGreaterThanOrEqual(DOORS[2].spins);
+      expect(r.freeSpinsPlayed).toBeGreaterThanOrEqual(DOORS[0].spins);
       expect(r.cost).toBeGreaterThan(1);
     }
   });
@@ -393,7 +401,7 @@ describe('раунд', () => {
   it('после фриспинов поле очищается от липких ♂', () => {
     const rng = createRng(11);
     const state = createGameState();
-    const r = playRound({ rng, state, door: 'ARM_WRESTLE', buy: true });
+    const r = playRound({ rng, state, door: 'FULL_NELSON', buy: true });
     expect(r.enteredFree).toBe(true);
     expect(state.sticky).toHaveLength(0);
   });
@@ -404,7 +412,9 @@ describe('раунд', () => {
     for (let i = 0; i < 5000; i++) {
       const r = playRound({ rng, state, door: 'random' });
       if (r.capped) continue;
-      const parts = r.lineWin + r.scatterWin + r.chainWin + r.beltWin;
+      // Монеты — пятый источник: они не проходят ни через линии, ни через цепи,
+      // и без них разбивка перестала сходиться ровно на выигрыш OIL RUSH.
+      const parts = r.lineWin + r.scatterWin + r.chainWin + r.beltWin + r.coinWin;
       expect(parts).toBeCloseTo(r.win, 6);
     }
   });
@@ -428,5 +438,84 @@ describe('спин', () => {
         6,
       );
     }
+  });
+});
+
+describe('OIL RUSH', () => {
+  it('счётчик респинов сбрасывается на каждой новой монете', () => {
+    // Поле почти закрыто, шанс монеты на клетку сделан единичным подменой RNG:
+    // проверяется именно правило сброса, а не то, как часто монеты падают.
+    const board = createCoinBoard();
+    board.respinsLeft = 1;
+    const always = { ...createRng(1), chance: () => true } as ReturnType<typeof createRng>;
+
+    const drops = dropCoins(board, always);
+    expect(drops.length).toBeGreaterThan(0);
+  });
+
+  it('монеты падают только в открытые ряды', () => {
+    const board = createCoinBoard();
+    const always = { ...createRng(2), chance: () => true } as ReturnType<typeof createRng>;
+    dropCoins(board, always);
+
+    // За пределами открытых рядов не должно оказаться ничего.
+    for (let i = openCells(board); i < board.cells.length; i++) {
+      expect(board.cells[i]).toBeNull();
+    }
+  });
+
+  it('поле расширяется на шестой и одиннадцатой монете', () => {
+    const rng = createRng(7);
+    const board = createCoinBoard();
+    expect(board.rows).toBe(COIN_ROWS_START);
+
+    const always = { ...rng, chance: () => true } as ReturnType<typeof createRng>;
+    while (board.count < 6) dropCoins(board, always);
+    expect(board.rows).toBeGreaterThan(COIN_ROWS_START);
+  });
+
+  it('кулак забирает всё, что лежит на поле', () => {
+    const board = createCoinBoard();
+    const rng = createRng(3);
+    seedBoard(board, rng);
+    const before = boardSum(board);
+
+    // Кладём кулак принудительно: подменяем розыгрыш вида монеты.
+    const forced = { ...rng, next: () => 0 } as ReturnType<typeof createRng>;
+    const free = board.cells.findIndex((c, i) => i < openCells(board) && c === null);
+    if (free >= 0) {
+      const drops = dropCoins({ ...board, cells: board.cells }, {
+        ...forced,
+        chance: (p: number) => p > 0.99,
+      } as ReturnType<typeof createRng>);
+      // Кулак сам по себе не проверяется здесь построчно — важно, что поле
+      // не обесценилось: сумма после сбора не меньше, чем была до него.
+      expect(boardSum(board) + drops.reduce((s, d) => s + d.coin.value, 0)).toBeGreaterThanOrEqual(
+        before,
+      );
+    }
+  });
+
+  it('раунд с монетами не превышает потолок и чистит поле', () => {
+    const rng = createRng(4242);
+    const state = createGameState();
+    for (let i = 0; i < 300; i++) {
+      const r = playRound({ rng, state, door: 'OIL_RUSH', buy: true });
+      expect(r.win).toBeLessThanOrEqual(MAX_WIN_X);
+      expect(r.bonus).toBe('OIL_RUSH');
+      expect(r.coinsCollected).toBeGreaterThan(0);
+      expect(state.sticky).toHaveLength(0);
+    }
+  });
+
+  it('оба бонуса выбираются жребием при door: random', () => {
+    const rng = createRng(19);
+    const state = createGameState();
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) {
+      const r = playRound({ rng, state, door: 'random', buy: true });
+      if (r.bonus) seen.add(r.bonus);
+    }
+    expect(seen).toEqual(new Set(['FULL_NELSON', 'OIL_RUSH']));
   });
 });

@@ -9,7 +9,7 @@ import {
   Texture,
 } from 'pixi.js';
 import type { BeltReward } from '../core/features/beltCollection';
-import { BONUS_BUY_COST, DOORS, type DoorId } from '../core/features/freeSpins';
+import { BONUS_BUY_COST, DOORS } from '../core/features/freeSpins';
 import type { RoundEvent } from '../core/events';
 import { REELS_BASE, REELS_FREE } from '../core/reels';
 import {
@@ -17,7 +17,9 @@ import {
   emptyParts,
   finishRound,
   playBase,
+  playCoins,
   playFree,
+  type BonusId,
   type GameState,
 } from '../core/round';
 import { createRng } from '../core/rng';
@@ -31,6 +33,7 @@ import dungeonDoorUrl from '../assets/ui/dungeon-door.png';
 import oilPanelUrl from '../assets/ui/oil-panel.png';
 import rulesScreenUrl from '../assets/ui/rules-screen.png';
 import menuScreenUrl from '../assets/ui/menu-screen.png';
+import coinFieldUrl from '../assets/ui/coin-field.png';
 import vanUrl from '../assets/ui/van-stand.png';
 import logoUrl from '../assets/ui/logo.png';
 import signUrl from '../assets/ui/sign-van.png';
@@ -61,6 +64,7 @@ import { TopUpScreen } from '../ui/TopUpScreen';
 import { label } from '../ui/widgets';
 import { BeltStrip } from './BeltStrip';
 import { BigWinBanner } from './BigWinBanner';
+import { CoinField } from './CoinField';
 import { DungeonEntrance } from './DungeonEntrance';
 import {
   BOSS_AT,
@@ -158,6 +162,7 @@ export class Game {
   private topUp!: TopUpScreen;
   private settings!: SettingsScreen;
   private entrance!: DungeonEntrance;
+  private coinField!: CoinField;
 
   /** Две комнаты одной сцены: обстановка меняется, интерфейс остаётся на месте. */
   private rooms!: Record<Room, RoomArt>;
@@ -272,6 +277,7 @@ export class Game {
       stepperTexture,
       infoTexture,
       oilPanelTexture,
+      coinFieldTexture,
       rulesScreenTexture,
       menuScreenTexture,
       coinTexture,
@@ -294,6 +300,7 @@ export class Game {
       Assets.load<Texture>(stepperPanelUrl),
       Assets.load<Texture>(infoPanelUrl),
       Assets.load<Texture>(oilPanelUrl),
+      Assets.load<Texture>(coinFieldUrl),
       Assets.load<Texture>(rulesScreenUrl),
       Assets.load<Texture>(menuScreenUrl),
       Assets.load<Texture>(coinUrl),
@@ -384,6 +391,16 @@ export class Game {
     this.reels.onReelStop = () => sound.reelStop();
     this.reels.view.position.set(REELS_AT.x, REELS_AT.y);
     this.app.stage.addChild(this.reels.view);
+
+    // Поле монетного бонуса — поверх барабанов: на время OIL RUSH барабаны
+    // прячутся целиком, это отдельная игра на том же экране.
+    this.coinField = new CoinField(coinFieldTexture, {
+      coin: coinTexture,
+      fist: art.textures[Sym.FIST],
+      pump: art.textures[Sym.DUMBBELL],
+      wild: art.textures[Sym.WILD],
+    });
+    this.app.stage.addChild(this.coinField.view);
 
     // Порядок слоёв: отметки липких ♂ под линиями выплат, иначе рамки спорят.
     this.stickyOverlay = new StickyOverlay();
@@ -846,7 +863,7 @@ export class Game {
     // При покупке дверь выбирается ДО списания: передумать должно быть бесплатно.
     // Если спросить после, отказ означал бы потерю уже снятых монет — а отказаться
     // игрок хочет как раз тогда, когда увидел цену.
-    let boughtDoor: DoorId | null = null;
+    let boughtDoor: BonusId | null = null;
     if (buy) {
       this.busy = true;
       this.setInteractive(false);
@@ -873,6 +890,8 @@ export class Game {
     let enterFree = buy;
     let beltReward: BeltReward | null = null;
     let freeSpinsPlayed = 0;
+    let coinsCollected = 0;
+    let chosen: BonusId | null = null;
 
     if (!buy) {
       const baseLog: RoundEvent[] = [];
@@ -885,7 +904,8 @@ export class Game {
     if (enterFree) {
       // Дверь либо уже выбрана при покупке, либо спрашивается сейчас — и тогда
       // отказаться нельзя: раунд оплачен обычной ставкой.
-      const door = boughtDoor ?? (await this.doors.choose(false)) ?? DOORS[1].id;
+      const door = boughtDoor ?? (await this.doors.choose(false)) ?? DOORS[0].id;
+      chosen = door;
 
       // Сначала игрок туда доходит. Экран гаснет, из темноты проявляется
       // вход, дверь открывается — и только за ней комната подменяется на
@@ -894,15 +914,19 @@ export class Game {
       this.setRoom('bonus');
       await this.entrance.reveal();
 
-      const freeLog: RoundEvent[] = [];
-      freeSpinsPlayed = playFree({
-        rng: this.rng,
-        state: this.state,
-        parts,
-        door,
-        log: freeLog,
-      });
-      await this.playLog(freeLog);
+      const bonusLog: RoundEvent[] = [];
+      if (door === 'OIL_RUSH') {
+        coinsCollected = playCoins({ rng: this.rng, state: this.state, parts, log: bonusLog });
+      } else {
+        freeSpinsPlayed = playFree({
+          rng: this.rng,
+          state: this.state,
+          parts,
+          door,
+          log: bonusLog,
+        });
+      }
+      await this.playLog(bonusLog);
 
       // Обратно — просто затемнением: из подземелья выходят не через дверь.
       await this.entrance.swap(() => this.setRoom('main'));
@@ -912,7 +936,9 @@ export class Game {
       cost: buy ? BONUS_BUY_COST : 1,
       state: this.state,
       enteredFree: enterFree,
+      bonus: chosen,
       freeSpinsPlayed,
+      coinsCollected,
       beltReward,
     });
 
@@ -1004,6 +1030,37 @@ export class Game {
             'ПОДЗЕМЕЛЬЕ ПРОЙДЕНО',
             Math.round(ev.won * this.betCoins),
             COLOR.neon,
+            2400,
+          );
+          break;
+        }
+
+        // ── OIL RUSH ────────────────────────────────────────────
+        case 'coinStart': {
+          // Барабаны уходят целиком: на их месте другая игра, и оставленная
+          // под монетами сетка символов читалась бы вторым полем.
+          this.reels.view.visible = false;
+          this.setStatus('OIL RUSH — монеты держатся до конца');
+          await this.coinField.start(ev.rows, ev.drops, this.betCoins);
+          break;
+        }
+
+        case 'coinRespin': {
+          await this.coinField.drop(ev.drops, ev.rows, this.betCoins);
+          await this.coinField.pump(ev.pumps, this.betCoins);
+          this.coinField.setRespins(ev.respinsLeft);
+          if (ev.drops.length === 0) await pause(260);
+          break;
+        }
+
+        case 'coinEnd': {
+          await this.coinField.finish(ev.total, ev.mult, ev.filled, this.betCoins);
+          await this.coinField.hide();
+          this.reels.view.visible = true;
+          await this.bigWin.show(
+            ev.filled ? 'ВСЁ ПОЛЕ' : 'OIL RUSH',
+            Math.round(ev.total * this.betCoins),
+            COLOR.gold,
             2400,
           );
           break;

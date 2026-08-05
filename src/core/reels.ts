@@ -67,7 +67,7 @@ export const WEIGHTS_FREE: readonly (readonly number[])[] = buildWeightTable('fr
   // остальная игра вместе взятая.
   [Sym.WILD,             0,  2,  3,  2,  0],
   [Sym.SCATTER,          1,  1,  1,  1,  1],
-  [Sym.CHAIN,           12, 11, 11, 11, 12],
+  [Sym.CHAIN,           12, 11, 11, 11, 13],
   [Sym.FIST,             0,  0,  0,  0,  1],
 ]);
 

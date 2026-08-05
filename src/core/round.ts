@@ -6,8 +6,16 @@ import {
   type BeltState,
 } from './features/beltCollection';
 import {
+  COIN_RESPINS,
+  coinPayout,
+  createCoinBoard,
+  dropCoins,
+  isBoardFull,
+  runPumps,
+  seedBoard,
+} from './features/coinRush';
+import {
   BONUS_BUY_COST,
-  DOORS,
   grantRetrigger,
   roundMultiplier,
   startFreeSpins,
@@ -40,13 +48,24 @@ export function createGameState(): GameState {
   return { sticky: [], belt: createBeltState() };
 }
 
-/** Как выбирается дверь фриспинов. Живой игрок решает сам, симулятор — по стратегии. */
-export type DoorChoice = DoorId | 'random';
+/**
+ * Что игрок выбирает за дверью. Бонуса два, и устроены они противоположно:
+ * фриспины собирают выигрыш множителем и могут не собрать ничего, монеты
+ * копятся мелкими шагами и почти всегда что-то приносят.
+ */
+export type BonusId = DoorId | 'OIL_RUSH';
+
+/** Как выбирается бонус. Живой игрок решает сам, симулятор — по стратегии. */
+export type DoorChoice = BonusId | 'random';
+
+export const BONUSES: readonly BonusId[] = ['FULL_NELSON', 'OIL_RUSH'];
 
 /** Слагаемые выигрыша. Считаются по всем фазам и складываются один раз, в конце. */
 export interface WinParts {
   baseWin: number;
   freeWin: number;
+  /** Выигрыш монетного бонуса. Отдельно от freeWin — иначе не видно, кто сколько даёт. */
+  coinWin: number;
   beltWin: number;
   lineWin: number;
   scatterWin: number;
@@ -54,7 +73,15 @@ export interface WinParts {
 }
 
 export function emptyParts(): WinParts {
-  return { baseWin: 0, freeWin: 0, beltWin: 0, lineWin: 0, scatterWin: 0, chainWin: 0 };
+  return {
+    baseWin: 0,
+    freeWin: 0,
+    coinWin: 0,
+    beltWin: 0,
+    lineWin: 0,
+    scatterWin: 0,
+    chainWin: 0,
+  };
 }
 
 export interface RoundOptions {
@@ -85,6 +112,7 @@ export interface RoundResult {
 
   baseWin: number;
   freeWin: number;
+  coinWin: number;
   beltWin: number;
 
   /** Разбивка по источникам за весь раунд — нужна симулятору, чтобы видеть,
@@ -97,7 +125,11 @@ export interface RoundResult {
 
   hit: boolean;
   enteredFree: boolean;
+  /** Какой бонус разыгран, если раунд до него дошёл. */
+  bonus: BonusId | null;
   freeSpinsPlayed: number;
+  /** Сколько монет собрано в OIL RUSH. */
+  coinsCollected: number;
   beltReward: BeltReward | null;
   capped: boolean;
 }
@@ -122,8 +154,8 @@ function grantWilds(sticky: StickyWild[], count: number, rng: Rng): void {
   }
 }
 
-export function pickDoor(choice: DoorChoice, rng: Rng): DoorId {
-  return choice === 'random' ? rng.pick(DOORS).id : choice;
+export function pickDoor(choice: DoorChoice, rng: Rng): BonusId {
+  return choice === 'random' ? rng.pick(BONUSES) : choice;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -246,6 +278,68 @@ export function playFree(o: FreeOptions): number {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Фаза 2, вариант второй: OIL RUSH
+// ─────────────────────────────────────────────────────────────
+
+export interface CoinOptions {
+  rng: Rng;
+  state: GameState;
+  parts: WinParts;
+  log?: RoundEvent[];
+}
+
+/**
+ * Монетный бонус целиком. Возвращает, сколько монет собрано.
+ *
+ * Никакой связи с лентами и линиями здесь нет вовсе: это отдельная игра
+ * на том же экране. Поэтому и липкие ♂ базовой игры в неё не переезжают —
+ * им тут не на что влиять, а поле после бонуса всё равно чистится.
+ */
+export function playCoins(o: CoinOptions): number {
+  const { rng, state, parts } = o;
+  const board = createCoinBoard();
+
+  const seeded = seedBoard(board, rng);
+  o.log?.push({ type: 'coinStart', rows: board.rows, drops: seeded });
+
+  while (board.respinsLeft > 0) {
+    const drops = dropCoins(board, rng);
+    const pumps = runPumps(board, rng);
+
+    // Счётчик респинов сбрасывается на КАЖДОЙ новой монете — в этом вся игра.
+    board.respinsLeft = drops.length > 0 ? COIN_RESPINS : board.respinsLeft - 1;
+
+    o.log?.push({
+      type: 'coinRespin',
+      drops,
+      pumps,
+      rows: board.rows,
+      respinsLeft: board.respinsLeft,
+      mult: board.mult,
+    });
+
+    // Закрытое поле кончает бонус досрочно: сыпать больше некуда.
+    if (isBoardFull(board)) break;
+  }
+
+  const total = coinPayout(board);
+  parts.coinWin += total;
+  o.log?.push({
+    type: 'coinEnd',
+    total,
+    filled: isBoardFull(board),
+    mult: board.mult,
+    coins: board.count,
+  });
+
+  // Раунд закончился — поле базовой игры чистится, как и после фриспинов.
+  state.sticky = [];
+  state.belt.dry = 0;
+
+  return board.count;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Итог
 // ─────────────────────────────────────────────────────────────
 
@@ -260,12 +354,14 @@ export function finishRound(
     cost: number;
     state: GameState;
     enteredFree: boolean;
+    bonus?: BonusId | null;
     freeSpinsPlayed: number;
+    coinsCollected?: number;
     beltReward: BeltReward | null;
     log?: RoundEvent[];
   },
 ): RoundResult {
-  const raw = parts.baseWin + parts.beltWin + parts.freeWin;
+  const raw = parts.baseWin + parts.beltWin + parts.freeWin + parts.coinWin;
   const capped = raw > MAX_WIN_X;
   const win = capped ? MAX_WIN_X : raw;
   if (capped) ctx.log?.push({ type: 'capped', raw, capped: win });
@@ -275,6 +371,7 @@ export function finishRound(
     win,
     baseWin: parts.baseWin,
     freeWin: parts.freeWin,
+    coinWin: parts.coinWin,
     beltWin: parts.beltWin,
     lineWin: parts.lineWin,
     scatterWin: parts.scatterWin,
@@ -282,7 +379,9 @@ export function finishRound(
     stickyCount: ctx.state.sticky.length,
     hit: raw > 0,
     enteredFree: ctx.enteredFree,
+    bonus: ctx.bonus ?? null,
     freeSpinsPlayed: ctx.freeSpinsPlayed,
+    coinsCollected: ctx.coinsCollected ?? 0,
     beltReward: ctx.beltReward,
     capped,
   };
@@ -300,6 +399,8 @@ export function playRound(o: RoundOptions): RoundResult {
   let enterFree = buy;
   let beltReward: BeltReward | null = null;
   let freeSpinsPlayed = 0;
+  let coinsCollected = 0;
+  let bonus: BonusId | null = null;
 
   // При покупке бонуса базовый спин не крутится: игрок платит за проход сразу.
   if (!buy) {
@@ -309,21 +410,28 @@ export function playRound(o: RoundOptions): RoundResult {
   }
 
   if (enterFree) {
-    freeSpinsPlayed = playFree({
-      rng,
-      state,
-      parts,
-      door: pickDoor(o.door, rng),
-      symAccum: o.symAccum,
-      log: o.log,
-    });
+    bonus = pickDoor(o.door, rng);
+    if (bonus === 'OIL_RUSH') {
+      coinsCollected = playCoins({ rng, state, parts, log: o.log });
+    } else {
+      freeSpinsPlayed = playFree({
+        rng,
+        state,
+        parts,
+        door: bonus,
+        symAccum: o.symAccum,
+        log: o.log,
+      });
+    }
   }
 
   return finishRound(parts, {
     cost: buy ? BONUS_BUY_COST : 1,
     state,
     enteredFree: enterFree,
+    bonus,
     freeSpinsPlayed,
+    coinsCollected,
     beltReward,
     log: o.log,
   });
