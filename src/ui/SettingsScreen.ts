@@ -156,10 +156,16 @@ export class SettingsScreen {
     return [this.at(box.x), this.at(box.y), this.at(box.w), this.at(box.h)];
   }
 
-  /** Прямоугольник картинки → прямоугольник на сцене (зоны живут вне панели). */
+  /**
+   * Прямоугольник картинки → прямоугольник для HotZone.
+   *
+   * Совпадает с local(): зоны кладутся детьми в `this.panel`, который уже
+   * сдвинут на MENU_SCREEN.x/y, и добавлять этот сдвиг ещё раз здесь — значит
+   * посчитать его дважды. Раньше так и было, и зоны нажатия с подсветкой
+   * уезжали от нарисованных кнопок на MENU_SCREEN.x/y пикселей.
+   */
   private rect(box: Box): [number, number, number, number] {
-    const [x, y, w, h] = this.local(box);
-    return [MENU_SCREEN.x + x, MENU_SCREEN.y + y, w, h];
+    return this.local(box);
   }
 
   /** Сброс требует второго нажатия: отменить его потом будет нечем. */
