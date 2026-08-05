@@ -14,12 +14,15 @@
 
 Нужна Windows 64-бит. Больше ничего — ни браузера, ни Node.
 
-1. Скачать `GainsAndChains-0.1.0-x64.exe`
+1. Скачать **[GainsAndChains-0.1.0-x64.exe](https://github.com/adreishshapka-cloud/gains-and-chains/releases/latest/download/GainsAndChains-0.1.0-x64.exe)** (121 МБ)
 2. Запустить, выбрать папку, дождаться установки
 3. Играть с ярлыка на рабочем столе или из меню «Пуск»
 
-Есть и версия без установки — `GainsAndChains-portable-0.1.0.exe`: один файл,
-запускается откуда угодно, хоть с флешки.
+Есть и версия без установки —
+**[GainsAndChains-portable-0.1.0.exe](https://github.com/adreishshapka-cloud/gains-and-chains/releases/latest/download/GainsAndChains-portable-0.1.0.exe)**:
+один файл, запускается откуда угодно, хоть с флешки.
+
+Все сборки — на [странице релизов](https://github.com/adreishshapka-cloud/gains-and-chains/releases).
 
 ### «Windows защитила ваш компьютер»
 
