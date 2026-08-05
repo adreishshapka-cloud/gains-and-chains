@@ -20,6 +20,19 @@ export type Rect = readonly [number, number, number, number];
 export const REELS_AT = { x: 475, y: 105, cell: 136 } as const;
 
 /**
+ * Середина клетки поля в координатах сцены.
+ *
+ * Нужна тем, кто рисует поверх поля, но не является его частью и потому не
+ * может взять координаты у контейнера барабанов, — искрам, например.
+ */
+export function cellCenter(reel: number, row: number): { x: number; y: number } {
+  return {
+    x: REELS_AT.x + reel * REELS_AT.cell + REELS_AT.cell / 2,
+    y: REELS_AT.y + row * REELS_AT.cell + REELS_AT.cell / 2,
+  };
+}
+
+/**
  * Нарисованная на фоне рамка вокруг окна барабанов — вместе с её деревянной
  * кромкой и заклёпками. Границы сняты по профилям яркости: металл начинается
  * на 438 и кончается на 1190 по горизонтали, 84 и 678 по вертикали.

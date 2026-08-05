@@ -22,12 +22,17 @@ import { dur, pause } from './timing';
  * Экспортируется: Game.ts сверяется с этими же порогами и цветами, когда решает,
  * показывать ли поверх обычного показа ещё и полноэкранный баннер большого
  * выигрыша — второй источник границ здесь был бы способом рассинхронизировать их.
+ *
+ * `shake` — сила толчка экрана в пикселях на этой ступени, `waves` — сколько
+ * волн искр за ней летит. Лежат здесь по той же причине, что и цвет с
+ * длительностью счётчика: подача ступени описана в одном месте, а не растащена
+ * по слоям.
  */
 export const TIERS = [
-  { min: 100, title: 'MAXIMUM GAINS', color: COLOR.neon, count: 3.4, hold: 1600 },
-  { min: 40, title: 'MEGA PUMP', color: COLOR.cyan, count: 2.6, hold: 1300 },
-  { min: 15, title: 'BIG LIFT', color: COLOR.gold, count: 1.9, hold: 1000 },
-  { min: 5, title: 'GOOD REP', color: COLOR.gold, count: 1.2, hold: 700 },
+  { min: 100, title: 'MAXIMUM GAINS', color: COLOR.neon, count: 3.4, hold: 1600, shake: 22, waves: 5 },
+  { min: 40, title: 'MEGA PUMP', color: COLOR.cyan, count: 2.6, hold: 1300, shake: 16, waves: 4 },
+  { min: 15, title: 'BIG LIFT', color: COLOR.gold, count: 1.9, hold: 1000, shake: 11, waves: 3 },
+  { min: 5, title: 'GOOD REP', color: COLOR.gold, count: 1.2, hold: 700, shake: 8, waves: 2 },
 ] as const;
 
 /** Цвета линий: соседние линии не должны сливаться, когда горят разом. */

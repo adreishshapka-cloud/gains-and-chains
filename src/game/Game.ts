@@ -66,12 +66,14 @@ import { TopUpScreen } from '../ui/TopUpScreen';
 import { label } from '../ui/widgets';
 import { BeltStrip } from './BeltStrip';
 import { BigWinBanner } from './BigWinBanner';
+import { Camera } from './camera';
 import { CoinField } from './CoinField';
 import { loadCoinArt } from './coinTextures';
 import { DungeonEntrance } from './DungeonEntrance';
 import {
   BOSS_AT,
   BUTTONS,
+  cellCenter,
   COIN,
   INFO,
   LOGO_AT,
@@ -100,6 +102,7 @@ import { ReelDividers } from './ReelDividers';
 import { ReelSet } from './ReelSet';
 import { AUTO_ROUNDS, BET_LEVELS } from './rules';
 import { StickyOverlay } from './StickyOverlay';
+import { Sparks } from './Sparks';
 import { loadSymbolArt } from './symbolTextures';
 import { pause, timing, TURBO_SPEED } from './timing';
 import { TIERS, WinPresenter } from './WinPresenter';
@@ -108,6 +111,20 @@ import { TIERS, WinPresenter } from './WinPresenter';
  *  барабанами есть у любого выигрыша; это — надстройка для по-настоящему
  *  крупных, которые должны бросаться в глаза, а не тонуть в размере окна барабанов. */
 const BIG_WIN_THRESHOLD = 10;
+
+/**
+ * Сила толчка экрана на развязках, пиксели: конец бонуса и награда за три жетона.
+ * Ступени обычного выигрыша носят свою силу в TIERS — там она стоит рядом
+ * с остальной подачей ступени.
+ *
+ * Развязка бонуса трясёт сильнее любой ступени намеренно: это конец всего
+ * раунда, а не крупный спин внутри него.
+ */
+const FINALE_SHAKE = 24;
+const REWARD_SHAKE = 12;
+
+/** Волн искр на развязке бонуса. Баннер там держится дольше любого другого. */
+const FINALE_WAVES = 6;
 
 /**
  * Сцена и игровой цикл.
@@ -155,6 +172,8 @@ export class Game {
   private reels!: ReelSet;
   private win!: WinPresenter;
   private bigWin!: BigWinBanner;
+  private camera!: Camera;
+  private sparks!: Sparks;
   /** Монета рядом с балансом — так же, как нарисовано на панели в наборе. */
   private coinTexture!: Texture;
   private coinIcon!: Sprite;
@@ -259,6 +278,7 @@ export class Game {
       autoDensity: true,
     });
     mount.appendChild(this.app.canvas);
+    this.camera = new Camera(this.app.stage);
     this.fitToWindow();
     window.addEventListener('resize', () => this.fitToWindow());
 
@@ -479,6 +499,11 @@ export class Game {
     this.bigWin = new BigWinBanner();
     this.app.stage.addChild(this.bigWin.view);
 
+    // Искры ложатся поверх баннера намеренно: они сыплются в тот же момент,
+    // и под затемнением баннера их бы просто не было видно.
+    this.sparks = new Sparks(this.app.renderer);
+    this.app.stage.addChild(this.sparks.view);
+
     this.rules = new PaytableScreen(STAGE_W, STAGE_H, rulesScreenTexture);
     this.app.stage.addChild(this.rules.view);
     this.doors = new DoorScreen(STAGE_W, STAGE_H, choiceScreenTexture);
@@ -517,7 +542,11 @@ export class Game {
     window.addEventListener('pointerdown', unlock, { once: true });
     window.addEventListener('keydown', unlock, { once: true });
 
-    this.app.ticker.add((ticker) => this.reels.update(ticker.deltaMS / 1000));
+    this.app.ticker.add((ticker) => {
+      const dt = ticker.deltaMS / 1000;
+      this.reels.update(dt);
+      this.sparks.update(dt);
+    });
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
 
@@ -543,6 +572,9 @@ export class Game {
     this.floorLine.texture = art.floor;
     this.mascot.setFigure(art.figure, art.figureBox);
     for (const prop of this.mainProps) prop.visible = room === 'main';
+    // Искры прошлой комнаты не должны пережить подмену: смена идёт под чёрной
+    // шторкой, и всё, что уцелеет, вынырнет уже над другой обстановкой.
+    this.sparks.clear();
     music.play(art.theme);
   }
 
@@ -996,6 +1028,7 @@ export class Game {
           await this.reels.spin(ev.spin.grid);
           this.stickyOverlay.update(ev.spin.sticky, 'base');
           this.setText('oil', String(ev.spin.collect?.chains.length ?? 0));
+          this.punchOnCollect(ev.spin.collect);
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin);
           await this.maybeShowBigWin(ev.spin.totalWin);
           break;
@@ -1016,6 +1049,7 @@ export class Game {
                 ? 'ВХОД В ПОДЗЕМЕЛЬЕ'
                 : `${ev.reward.wilds} ЛИПКИХ ♂`;
           this.mascot.setMood('flex');
+          this.camera.shake(REWARD_SHAKE, 0.5);
           await this.showBanner(`ТРИ ЖЕТОНА — ${what}`, 1400);
           this.belt.set(0);
           this.stickyOverlay.update(this.state.sticky, 'base');
@@ -1035,6 +1069,7 @@ export class Game {
           );
           await this.reels.spin(ev.spin.grid);
           this.stickyOverlay.update(ev.spin.sticky, 'free');
+          this.punchOnCollect(ev.spin.collect);
           await this.presentSpin(ev.spin.lineWins, ev.spin.collect, ev.spin.totalWin, ev.mult);
           await this.maybeShowBigWin(ev.spin.totalWin);
           if (ev.spin.totalWin === 0) await pause(170);
@@ -1050,6 +1085,8 @@ export class Game {
           this.stickyOverlay.clear();
           // Итог бонуса — не рядовой показ, а развязка всего раунда: баннер
           // берёт весь экран, а не только окно барабанов, как обычный выигрыш.
+          this.camera.shake(FINALE_SHAKE, 0.7);
+          void this.cheer(FINALE_WAVES, COLOR.neon);
           await this.bigWin.show(
             'ПОДЗЕМЕЛЬЕ ПРОЙДЕНО',
             Math.round(ev.won * this.betCoins),
@@ -1078,6 +1115,8 @@ export class Game {
 
         case 'coinEnd': {
           await this.coinField.finish(ev.total, ev.mult, ev.filled, this.betCoins);
+          this.camera.shake(FINALE_SHAKE, 0.7);
+          void this.cheer(FINALE_WAVES, COLOR.gold);
           await this.bigWin.show(
             ev.filled ? 'ВСЁ ПОЛЕ' : 'OIL RUSH',
             Math.round(ev.total * this.betCoins),
@@ -1103,7 +1142,55 @@ export class Game {
     if (totalWin < BIG_WIN_THRESHOLD) return;
     const tier = TIERS.find((t) => totalWin >= t.min) ?? TIERS[TIERS.length - 1];
     const coins = Math.round(totalWin * this.betCoins);
+    // Толчок и искры не ждём: они должны идти вместе с появлением баннера,
+    // а не до него.
+    this.camera.shake(tier.shake, 0.6);
+    void this.cheer(tier.waves, tier.color);
     await this.bigWin.show(tier.title, coins, tier.color, tier.hold + 500);
+  }
+
+  /**
+   * Салют по центру экрана: `waves` волн искр одна за другой.
+   *
+   * Волны идут с паузой, а не разом: одиночный всплеск гаснет раньше, чем
+   * игрок дочитает сумму на баннере, и весь остаток показа экран стоит пустой.
+   *
+   * Возвращённое обещание никто не ждёт — салют идёт поверх баннера и кончается
+   * сам, задерживать из-за него раунд не за чем.
+   */
+  private async cheer(waves: number, color: number): Promise<void> {
+    for (let i = 0; i < waves; i++) {
+      this.sparks.burst(
+        STAGE_W / 2 + (Math.random() * 2 - 1) * 300,
+        STAGE_H / 2 - 40 + (Math.random() * 2 - 1) * 120,
+        { count: 30, color, power: 560, life: 0.9 },
+      );
+      await pause(230);
+    }
+  }
+
+  /**
+   * Удар в экран, когда кулак сгрёб цепи.
+   *
+   * Сила растёт от числа собранных цепей: смахнуть одну и очистить пол-поля —
+   * события разного веса, и подача должна их различать.
+   *
+   * Цепи без кулака не трясут ничего: там ничего и не произошло.
+   */
+  private punchOnCollect(collect: CollectWin | null): void {
+    if (!collect || collect.total <= 0 || collect.fists.length === 0) return;
+    this.camera.shake(Math.min(14, 6 + collect.chains.length), 0.34);
+
+    // Искры сыплются с каждой смётанной цепи и покрупнее — с самого кулака.
+    // Цвет тот же, каким подсвечены клетки: золото на цепях, неон на кулаке.
+    for (const chain of collect.chains) {
+      const c = cellCenter(chain.pos.reel, chain.pos.row);
+      this.sparks.burst(c.x, c.y, { count: 12, color: COLOR.gold, power: 380 });
+    }
+    for (const fist of collect.fists) {
+      const c = cellCenter(fist.reel, fist.row);
+      this.sparks.burst(c.x, c.y, { count: 26, color: COLOR.neon, power: 620, life: 0.85 });
+    }
   }
 
   private presentSpin(
