@@ -1,3 +1,4 @@
+import gsap from 'gsap';
 import {
   Application,
   Assets,
@@ -127,6 +128,19 @@ const REWARD_SHAKE = 12;
 const FINALE_WAVES = 6;
 
 /**
+ * Во сколько раз ускоряется показ, когда игрок просит его пропустить.
+ *
+ * Пропуск сделан ускорением, а не обрывом: показ — это не одна анимация,
+ * которую можно перемотать в конец, а цепочка ожиданий по всему раунду,
+ * и обрывать её пришлось бы в каждом звене отдельно. Общий коэффициент темпа
+ * уже есть, и через него проходит всё — включая раскрутку барабанов.
+ *
+ * Множитель поверх турбо, а не вместо него: игрок, включивший турбо, просит
+ * ускорить показ ещё сильнее, а не вернуться к обычной скорости.
+ */
+const SKIP_SPEED = 6;
+
+/**
  * Сцена и игровой цикл.
  *
  * Весь интерфейс нарисован на фоне: рамки, панели, кнопки. Движок кладёт поверх
@@ -211,6 +225,17 @@ export class Game {
   private autoLeft = 0;
   private counterCoins = 0;
 
+  /** Темп без пропуска: турбо или обычный. Пропуск умножается поверх него. */
+  private baseSpeed = 1;
+  /** Идёт ли сейчас ускоренный показ по просьбе игрока. */
+  private skipping = false;
+  /**
+   * Можно ли пропускать прямо сейчас. Гаснет на сцене входа в подземелье:
+   * она намеренно идёт своим темпом (см. DungeonEntrance), и ускорять её —
+   * значит превращать вход в моргание.
+   */
+  private skippable = false;
+
   private get betCoins(): number {
     return BET_LEVELS[this.betIndex];
   }
@@ -221,7 +246,7 @@ export class Game {
       bet: this.betCoins,
       busy: this.busy,
       auto: this.autoLeft,
-      turbo: timing.speed > 1,
+      turbo: this.baseSpeed > 1,
       counter: this.counterCoins,
       presenting: this.win?.isPresenting ?? false,
       slowMotion: this.win?.slowMotion ?? 1,
@@ -267,7 +292,8 @@ export class Game {
     this.stats = this.save.stats;
     this.state.belt = { ...this.save.belt };
     this.state.sticky = this.save.sticky.map((s) => ({ ...s }));
-    timing.speed = this.save.turbo ? TURBO_SPEED : 1;
+    this.baseSpeed = this.save.turbo ? TURBO_SPEED : 1;
+    this.applySpeed();
 
     await this.app.init({
       width: STAGE_W,
@@ -513,7 +539,7 @@ export class Game {
     this.settings = new SettingsScreen(STAGE_W, STAGE_H, menuScreenTexture);
     this.settings.onToggleTurbo = () => {
       this.toggleTurbo();
-      this.settings.show({ turbo: timing.speed > 1, volume: music.level, stats: this.stats, balance: this.balance });
+      this.settings.show({ turbo: this.baseSpeed > 1, volume: music.level, stats: this.stats, balance: this.balance });
     };
     this.settings.onVolume = (value) => {
       music.setVolume(value);
@@ -696,7 +722,9 @@ export class Game {
     // SPIN тоже раскалённый, а не золотой, хотя сама кнопка золотая: золото
     // по золоту не читается вовсе — подсветку было не отличить от блика
     // на самой кнопке. На образце вокруг SPIN как раз тёплый оранжевый ореол.
-    add('spin', () => void this.spin(), COLOR.fire);
+    // Пока идёт раунд, та же кнопка работает пропуском показа: у игрока
+    // не должно быть отдельной кнопки на то, чтобы не досматривать.
+    add('spin', () => (this.busy ? this.requestSkip() : void this.spin()), COLOR.fire);
     add('buy', () => void this.spin(true), COLOR.neon);
     add('turbo', () => this.toggleTurbo(), COLOR.fire);
     add('auto', () => this.toggleAuto(), COLOR.fire);
@@ -764,7 +792,8 @@ export class Game {
     switch (e.code) {
       case 'Space':
         e.preventDefault();
-        void this.spin();
+        if (this.busy) this.requestSkip();
+        else void this.spin();
         break;
       case 'KeyA':
         this.toggleAuto();
@@ -817,7 +846,7 @@ export class Game {
 
   private openSettings(): void {
     if (this.busy) return;
-    this.settings.show({ turbo: timing.speed > 1, volume: music.level, stats: this.stats, balance: this.balance });
+    this.settings.show({ turbo: this.baseSpeed > 1, volume: music.level, stats: this.stats, balance: this.balance });
   }
 
   private stepBet(delta: number): void {
@@ -846,10 +875,42 @@ export class Game {
   }
 
   private toggleTurbo(): void {
-    const on = timing.speed === 1;
-    timing.speed = on ? TURBO_SPEED : 1;
+    const on = this.baseSpeed === 1;
+    this.baseSpeed = on ? TURBO_SPEED : 1;
+    this.applySpeed();
     this.zones.get('turbo')?.setActive(on);
     this.persist();
+  }
+
+  /**
+   * Ставит общий темп: базовый, умноженный на пропуск, если тот включён.
+   *
+   * Кроме `timing.speed` двигается ещё и глобальный таймлайн gsap. Иначе
+   * ускорились бы только паузы: анимация, начатая до просьбы пропустить,
+   * доигрывает в своём прежнем темпе, и показ идёт рывками — паузы уже
+   * короткие, а движение ещё медленное.
+   */
+  private applySpeed(): void {
+    const factor = this.skipping ? SKIP_SPEED : 1;
+    timing.speed = this.baseSpeed * factor;
+    gsap.globalTimeline.timeScale(factor);
+  }
+
+  /**
+   * Просьба не досматривать показ. Второе нажатие ничего не добавляет:
+   * ускорение включается один раз на раунд.
+   */
+  private requestSkip(): void {
+    if (!this.skippable || this.skipping || this.modalOpen) return;
+    this.skipping = true;
+    this.applySpeed();
+  }
+
+  /** Возврат к обычному темпу. Вызывается в конце раунда и перед входом в подземелье. */
+  private endSkip(): void {
+    if (!this.skipping) return;
+    this.skipping = false;
+    this.applySpeed();
   }
 
   private toggleAuto(): void {
@@ -919,6 +980,7 @@ export class Game {
     }
 
     this.busy = true;
+    this.skippable = true;
     this.setInteractive(false);
     this.counterCoins = 0;
     this.balance -= cost;
@@ -952,6 +1014,12 @@ export class Game {
       // Сначала игрок туда доходит. Экран гаснет, из темноты проявляется
       // вход, дверь открывается — и только за ней комната подменяется на
       // бонусную. Подмена под затемнением, в открытом кадре её не бывает.
+      //
+      // Пропуск здесь не работает и уже начатый — снимается: сцена входа идёт
+      // своим темпом даже в турбо, и ускорять её нечем, кроме как превратив
+      // в моргание.
+      this.skippable = false;
+      this.endSkip();
       await this.entrance.enter();
       this.setRoom('bonus');
       // Поле бонуса готовится ЗДЕСЬ, пока экран ещё чёрный: барабаны уходят,
@@ -963,6 +1031,7 @@ export class Game {
         this.coinField.prepare(COIN_ROWS_START);
       }
       await this.entrance.reveal();
+      this.skippable = true;
 
       const bonusLog: RoundEvent[] = [];
       if (door === 'OIL_RUSH') {
@@ -981,11 +1050,14 @@ export class Game {
       // Обратно — просто затемнением: из подземелья выходят не через дверь.
       // Поле монет убирается там же, под шторкой, и барабаны возвращаются
       // на своё место незаметно.
+      this.skippable = false;
+      this.endSkip();
       await this.entrance.swap(() => {
         this.coinField.hide();
         this.reels.view.visible = true;
         this.setRoom('main');
       });
+      this.skippable = true;
     }
 
     const result = finishRound(parts, {
@@ -1017,6 +1089,10 @@ export class Game {
     this.refreshAll();
     this.persist();
 
+    // Ускорение живёт ровно один раунд: следующий начинается в обычном темпе,
+    // иначе один пропуск незаметно превращался бы в постоянное турбо.
+    this.skippable = false;
+    this.endSkip();
     this.busy = false;
     this.setInteractive(true);
   }
@@ -1247,10 +1323,17 @@ export class Game {
   }
 
   private setInteractive(on: boolean): void {
-    for (const key of ['spin', 'buy', 'betDown', 'betUp', 'topUp']) {
-      this.zones.get(key)?.setEnabled(on && (key !== 'spin' || this.balance >= this.betCoins));
+    for (const key of ['buy', 'betDown', 'betUp', 'topUp']) {
+      this.zones.get(key)?.setEnabled(on);
     }
-    this.zones.get('spin')?.pulse(on && this.balance >= this.betCoins);
+
+    // SPIN не гаснет на время раунда: там он работает пропуском показа
+    // (см. buildZones). Гасить его — значит отнимать единственный способ
+    // не досматривать анимацию. Между раундами он по-прежнему выключается,
+    // когда монет не хватает даже на ставку.
+    const affordable = this.balance >= this.betCoins;
+    this.zones.get('spin')?.setEnabled(on ? affordable : true);
+    this.zones.get('spin')?.pulse(on && affordable);
   }
 
   private refreshMoney(): void {
@@ -1280,7 +1363,7 @@ export class Game {
       version: 1,
       balance: this.balance,
       betIndex: this.betIndex,
-      turbo: timing.speed > 1,
+      turbo: this.baseSpeed > 1,
       music: music.isOn,
       sound: sound.isOn,
       musicVolume: music.level,
