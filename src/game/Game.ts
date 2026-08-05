@@ -33,7 +33,15 @@ import dungeonDoorUrl from '../assets/ui/dungeon-door.png';
 import oilPanelUrl from '../assets/ui/oil-panel.png';
 import rulesScreenUrl from '../assets/ui/rules-screen.png';
 import menuScreenUrl from '../assets/ui/menu-screen.png';
-import coinFieldUrl from '../assets/ui/coin-field.png';
+import choiceScreenUrl from '../assets/ui/choice-screen.png';
+import topupScreenUrl from '../assets/ui/topup-screen.png';
+import coinBronzeUrl from '../assets/ui/coin-bronze.png';
+import coinSilverUrl from '../assets/ui/coin-silver.png';
+import coinGoldUrl from '../assets/ui/coin-gold.png';
+import coinDiamondUrl from '../assets/ui/coin-diamond.png';
+import coinFistUrl from '../assets/ui/coin-fist.png';
+import coinPumpUrl from '../assets/ui/coin-pump.png';
+import coinMultUrl from '../assets/ui/coin-mult.png';
 import vanUrl from '../assets/ui/van-stand.png';
 import logoUrl from '../assets/ui/logo.png';
 import signUrl from '../assets/ui/sign-van.png';
@@ -277,9 +285,10 @@ export class Game {
       stepperTexture,
       infoTexture,
       oilPanelTexture,
-      coinFieldTexture,
       rulesScreenTexture,
       menuScreenTexture,
+      choiceScreenTexture,
+      topupScreenTexture,
       coinTexture,
     ] = await Promise.all([
       Assets.load<Texture>(backgroundUrl),
@@ -300,9 +309,10 @@ export class Game {
       Assets.load<Texture>(stepperPanelUrl),
       Assets.load<Texture>(infoPanelUrl),
       Assets.load<Texture>(oilPanelUrl),
-      Assets.load<Texture>(coinFieldUrl),
       Assets.load<Texture>(rulesScreenUrl),
       Assets.load<Texture>(menuScreenUrl),
+      Assets.load<Texture>(choiceScreenUrl),
+      Assets.load<Texture>(topupScreenUrl),
       Assets.load<Texture>(coinUrl),
     ]);
     coinTexture.source.scaleMode = 'nearest';
@@ -394,11 +404,23 @@ export class Game {
 
     // Поле монетного бонуса — поверх барабанов: на время OIL RUSH барабаны
     // прячутся целиком, это отдельная игра на том же экране.
-    this.coinField = new CoinField(coinFieldTexture, {
-      coin: coinTexture,
-      fist: art.textures[Sym.FIST],
-      pump: art.textures[Sym.DUMBBELL],
-      wild: art.textures[Sym.WILD],
+    const [bronze, silver, gold, diamond, fistCoin, pumpCoin, multCoin] = await Promise.all([
+      Assets.load<Texture>(coinBronzeUrl),
+      Assets.load<Texture>(coinSilverUrl),
+      Assets.load<Texture>(coinGoldUrl),
+      Assets.load<Texture>(coinDiamondUrl),
+      Assets.load<Texture>(coinFistUrl),
+      Assets.load<Texture>(coinPumpUrl),
+      Assets.load<Texture>(coinMultUrl),
+    ]);
+    this.coinField = new CoinField({
+      bronze,
+      silver,
+      gold,
+      diamond,
+      fist: fistCoin,
+      pump: pumpCoin,
+      mult: multCoin,
     });
     this.app.stage.addChild(this.coinField.view);
 
@@ -471,9 +493,9 @@ export class Game {
 
     this.rules = new PaytableScreen(STAGE_W, STAGE_H, rulesScreenTexture);
     this.app.stage.addChild(this.rules.view);
-    this.doors = new DoorScreen(STAGE_W, STAGE_H);
+    this.doors = new DoorScreen(STAGE_W, STAGE_H, choiceScreenTexture);
     this.app.stage.addChild(this.doors.view);
-    this.topUp = new TopUpScreen(STAGE_W, STAGE_H);
+    this.topUp = new TopUpScreen(STAGE_W, STAGE_H, topupScreenTexture);
     this.app.stage.addChild(this.topUp.view);
     this.settings = new SettingsScreen(STAGE_W, STAGE_H, menuScreenTexture);
     this.settings.onToggleTurbo = () => {
@@ -1041,13 +1063,13 @@ export class Game {
           // под монетами сетка символов читалась бы вторым полем.
           this.reels.view.visible = false;
           this.setStatus('OIL RUSH — монеты держатся до конца');
-          await this.coinField.start(ev.rows, ev.drops, this.betCoins);
+          await this.coinField.start(ev.rows, ev.drops);
           break;
         }
 
         case 'coinRespin': {
-          await this.coinField.drop(ev.drops, ev.rows, this.betCoins);
-          await this.coinField.pump(ev.pumps, this.betCoins);
+          await this.coinField.drop(ev.drops, ev.rows);
+          await this.coinField.pump(ev.pumps);
           this.coinField.setRespins(ev.respinsLeft);
           if (ev.drops.length === 0) await pause(260);
           break;

@@ -1,8 +1,8 @@
 import gsap from 'gsap';
-import { Container, Graphics, Rectangle } from 'pixi.js';
-import { COLOR } from '../game/palette';
+import { Container, Graphics, Rectangle, Sprite, type Texture } from 'pixi.js';
+import { TOPUP_SCREEN } from '../game/layout';
 import { dur } from '../game/timing';
-import { Button, label } from './widgets';
+import { HotZone } from './HotZone';
 
 /**
  * Пополнение счёта.
@@ -11,8 +11,12 @@ import { Button, label } from './widgets';
  * порции выдаются просто так. Экран нужен не ради экономики, а чтобы кончившийся
  * баланс не превращался в тупик: без него единственным выходом была бы консоль.
  *
- * Формулировки намеренно спортзальные, а не платёжные — здесь ничего не
- * покупается, и выглядеть это должно соответственно.
+ * Формулировки намеренно спортзальные, а не платёжные — здесь ничего
+ * не покупается, и выглядеть это должно соответственно.
+ *
+ * Экран — готовая картинка из набора; порции на ней нарисованы, а движок
+ * добавляет только зоны нажатия. Числа порций держит `rulesArt.test.ts`,
+ * чтобы картинка и код не разошлись молча.
  */
 
 export interface TopUpOption {
@@ -27,17 +31,21 @@ export const TOP_UP_OPTIONS: readonly TopUpOption[] = [
   { coins: 100_000, title: 'МАКСИМУМ', note: 'VAN одобряет' },
 ];
 
-const CARD_W = 300;
-const CARD_H = 190;
-const GAP = 28;
+/** Карточки порций и «ЗАКРЫТЬ» в координатах картинки (1672x941). */
+const CARD_BOXES: readonly [number, number, number, number][] = [
+  [91, 254, 475, 416],
+  [594, 254, 480, 416],
+  [1102, 254, 478, 416],
+];
+const CLOSE_AT: [number, number, number, number] = [608, 714, 449, 129];
 
 export class TopUpScreen {
   readonly view = new Container();
 
   private resolve: ((coins: number | null) => void) | null = null;
-  private readonly cards: Container[] = [];
+  private readonly panel = new Container();
 
-  constructor(width: number, height: number) {
+  constructor(width: number, height: number, art: Texture) {
     this.view.visible = false;
 
     const shade = new Graphics();
@@ -45,83 +53,31 @@ export class TopUpScreen {
     shade.eventMode = 'static';
     shade.hitArea = new Rectangle(0, 0, width, height);
     shade.on('pointertap', () => this.pick(null));
-    this.view.addChild(shade);
+    this.view.addChild(shade, this.panel);
 
-    const title = label('ДОБАВИТЬ МОНЕТ', 46, COLOR.gold);
-    title.anchor.set(0.5, 0);
-    title.position.set(width / 2, height / 2 - 210);
-    this.view.addChild(title);
+    this.panel.position.set(TOPUP_SCREEN.x, TOPUP_SCREEN.y);
 
-    const sub = label(
-      'Монеты игровые: они ничего не стоят и никуда не выводятся.',
-      19,
-      0x9a8aaa,
-    );
-    sub.anchor.set(0.5, 0);
-    sub.position.set(width / 2, height / 2 - 156);
-    this.view.addChild(sub);
+    const backdrop = new Sprite(art);
+    backdrop.width = TOPUP_SCREEN.w;
+    backdrop.height = TOPUP_SCREEN.h;
+    backdrop.eventMode = 'static';
+    this.panel.addChild(backdrop);
 
-    const totalW = TOP_UP_OPTIONS.length * CARD_W + (TOP_UP_OPTIONS.length - 1) * GAP;
-    const startX = (width - totalW) / 2;
-    const top = height / 2 - 96;
+    const k = TOPUP_SCREEN.w / art.width;
+    const at = (box: [number, number, number, number]): [number, number, number, number] => [
+      box[0] * k,
+      box[1] * k,
+      box[2] * k,
+      box[3] * k,
+    ];
 
-    for (const [i, option] of TOP_UP_OPTIONS.entries()) {
-      const card = this.buildCard(option);
-      card.position.set(startX + i * (CARD_W + GAP), top);
-      this.cards.push(card);
-      this.view.addChild(card);
+    for (const [i, box] of CARD_BOXES.entries()) {
+      const zone = new HotZone(at(box), () => this.pick(TOP_UP_OPTIONS[i].coins));
+      this.panel.addChild(zone.view);
     }
 
-    const close = new Button({
-      text: 'ЗАКРЫТЬ',
-      width: 180,
-      height: 52,
-      fontSize: 22,
-      onTap: () => this.pick(null),
-    });
-    close.view.position.set((width - 180) / 2, top + CARD_H + 44);
-    this.view.addChild(close.view);
-  }
-
-  private buildCard(option: TopUpOption): Container {
-    const holder = new Container();
-    const card = new Container();
-
-    const bg = new Graphics();
-    bg.roundRect(0, 0, CARD_W, CARD_H, 16).fill(COLOR.dim);
-    bg.roundRect(0, 0, CARD_W, CARD_H, 16).stroke({ color: COLOR.gold, width: 4 });
-    card.addChild(bg);
-
-    const name = label(option.title, 26, COLOR.gold);
-    name.anchor.set(0.5, 0);
-    name.position.set(CARD_W / 2, 22);
-    card.addChild(name);
-
-    const coins = label(`+${option.coins.toLocaleString('ru-RU')}`, 44, COLOR.paper);
-    coins.anchor.set(0.5, 0);
-    coins.position.set(CARD_W / 2, 64);
-    card.addChild(coins);
-
-    const note = label(option.note, 16, 0x9a8aaa);
-    note.anchor.set(0.5, 0);
-    note.position.set(CARD_W / 2, 124);
-    card.addChild(note);
-
-    card.pivot.set(CARD_W / 2, CARD_H / 2);
-    card.position.set(CARD_W / 2, CARD_H / 2);
-    holder.addChild(card);
-
-    // События на обёртке: у карточки сдвинут pivot, и попадание в неё считается
-    // неверно — та же ловушка, что была на экране выбора двери.
-    holder.eventMode = 'static';
-    holder.cursor = 'pointer';
-    holder.hitArea = new Rectangle(0, 0, CARD_W, CARD_H);
-    holder.on('pointerover', () =>
-      gsap.to(card.scale, { x: 1.04, y: 1.04, duration: dur(0.16) }),
-    );
-    holder.on('pointerout', () => gsap.to(card.scale, { x: 1, y: 1, duration: dur(0.16) }));
-    holder.on('pointertap', () => this.pick(option.coins));
-    return holder;
+    const close = new HotZone(at(CLOSE_AT), () => this.pick(null), 0xc0553c);
+    this.panel.addChild(close.view);
   }
 
   private pick(coins: number | null): void {
@@ -131,26 +87,23 @@ export class TopUpScreen {
     done?.(coins);
   }
 
+  /** Закрыть по Escape. */
+  requestClose(): void {
+    this.pick(null);
+  }
+
   get isOpen(): boolean {
     return this.view.visible;
   }
 
-  /** @returns сколько монет добавить, либо null, если игрок передумал. */
+  /** Показывает экран и ждёт выбора порции. null — закрыл, ничего не взял. */
   choose(): Promise<number | null> {
     this.view.visible = true;
-    for (const [i, holder] of this.cards.entries()) {
-      const card = holder.children[0] as Container;
-      card.scale.set(0.9);
-      card.alpha = 0;
-      gsap.to(card, { alpha: 1, duration: dur(0.22), delay: dur(0.06 * i) });
-      gsap.to(card.scale, {
-        x: 1,
-        y: 1,
-        duration: dur(0.3),
-        delay: dur(0.06 * i),
-        ease: 'back.out(2)',
-      });
-    }
+    this.panel.alpha = 0;
+    this.panel.scale.set(0.94);
+    gsap.to(this.panel, { alpha: 1, duration: dur(0.26) });
+    gsap.to(this.panel.scale, { x: 1, y: 1, duration: dur(0.34), ease: 'back.out(1.8)' });
+
     return new Promise((resolve) => {
       this.resolve = resolve;
     });

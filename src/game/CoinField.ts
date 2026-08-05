@@ -5,7 +5,6 @@ import {
   COIN_RESPINS,
   COIN_ROWS_MAX,
   type CoinDrop,
-  type CoinTier,
   type PumpTick,
 } from '../core/features/coinRush';
 import { label } from '../ui/widgets';
@@ -17,28 +16,23 @@ import { dur, pause } from './timing';
  * Поле монетного бонуса OIL RUSH.
  *
  * Показывает то, что уже посчитала мат-модель: куда легли монеты, сколько
- * осталось респинов, какие ряды открыты. Ни одного решения здесь нет —
- * класс получает готовый лог событий раунда и разыгрывает его во времени.
+ * осталось респинов, какие ряды открыты. Ни одного решения здесь нет — класс
+ * получает готовый лог событий раунда и разыгрывает его во времени.
  *
- * Своя рамка, а не барабанная: у бонуса 25 клеток против двадцати, и клетка
- * мельче. Барабаны на время бонуса прячутся целиком — это отдельная игра
- * на том же экране, и мешать их друг с другом нельзя.
+ * Поле занимает окно барабанов целиком: барабаны на время бонуса прячутся,
+ * и монеты играют на их месте, в той же нарисованной рамке. Клетка при этом
+ * не квадратная (136×109): пять рядов в высоту окна иначе не помещаются,
+ * а монета всё равно круглая и садится по меньшей стороне.
  *
- * Монета — один и тот же спрайт, покрашенный по ступени номинала, плюс число
- * поверх. Ровно как цепи в базовой игре: номинал зависит от ставки, и зашитая
- * в картинку цифра начала бы врать при первой же смене ставки.
+ * Монеты — картинки из макета бонуса с ПУСТЫМ лицом (tools/prep_oil_rush.py),
+ * номинал пишет движок. Как и у цепей в базовой игре: номинал зависит
+ * от ставки, и зашитое в картинку число начало бы врать при её смене.
  */
 
-/** Цвет металла по ступени. Тот же порядок, что у цепей в OIL UP. */
-const TIER_COLOR: Record<CoinTier, number> = {
-  bronze: 0xb87333,
-  silver: 0xc3c9d6,
-  gold: 0xffd24a,
-  diamond: 0x7fe4ff,
-};
-
-/** Сколько ждать между падениями монет одного респина. */
-const DROP_STEP = 90;
+/** Сколько монета летит до своей клетки. */
+const FALL_TIME = 0.72;
+/** Задержка между монетами одного респина: они сыплются, а не появляются разом. */
+const FALL_STAGGER = 150;
 
 interface Slot {
   view: Container;
@@ -47,54 +41,66 @@ interface Slot {
   amount: number;
 }
 
+export interface CoinArt {
+  bronze: Texture;
+  silver: Texture;
+  gold: Texture;
+  diamond: Texture;
+  fist: Texture;
+  pump: Texture;
+  mult: Texture;
+}
+
 export class CoinField {
   readonly view = new Container();
 
   private readonly grid = new Graphics();
   private readonly locked = new Graphics();
-  private readonly slots: (Slot | null)[] = new Array(COIN_COLS * COIN_ROWS_MAX).fill(null);
   private readonly coins = new Container();
+  private readonly slots: (Slot | null)[] = new Array(COIN_COLS * COIN_ROWS_MAX).fill(null);
   private readonly respinsText: Text;
   private readonly totalText: Text;
   private rows = 0;
 
-  constructor(
-    frame: Texture,
-    private readonly art: {
-      coin: Texture;
-      fist: Texture;
-      pump: Texture;
-      wild: Texture;
-    },
-  ) {
+  constructor(private readonly art: CoinArt) {
     this.view.visible = false;
     this.view.position.set(COIN_FIELD.x, COIN_FIELD.y);
 
-    const backdrop = new Sprite(frame);
-    backdrop.width = COIN_FIELD.size;
-    backdrop.height = COIN_FIELD.size;
-    this.view.addChild(backdrop, this.grid, this.locked, this.coins);
+    const width = COIN_FIELD.cellW * COIN_COLS;
+    const height = COIN_FIELD.cellH * COIN_ROWS_MAX;
 
-    // Сетка клеток: тонкая, как разметка барабанов, — она размечает поле,
+    // Подложка глухая, без прозрачности: под окном барабанов на фоне нарисована
+    // таблица выплат, и даже шесть процентов прозрачности показывали её призраки
+    // в пустых клетках.
+    const backdrop = new Graphics().rect(0, 0, width, height).fill(0x0a0710);
+
+    // Разметка клеток — тонкая, как у барабанов: она размечает поле,
     // а не рисует решётку поверх игры.
     for (let i = 1; i < COIN_COLS; i++) {
-      const x = COIN_FIELD.edge + COIN_FIELD.cell * i;
-      this.grid.moveTo(x, COIN_FIELD.edge).lineTo(x, COIN_FIELD.size - COIN_FIELD.edge);
+      const x = COIN_FIELD.cellW * i;
+      this.grid.moveTo(x, 0).lineTo(x, height);
     }
     for (let i = 1; i < COIN_ROWS_MAX; i++) {
-      const y = COIN_FIELD.edge + COIN_FIELD.cell * i;
-      this.grid.moveTo(COIN_FIELD.edge, y).lineTo(COIN_FIELD.size - COIN_FIELD.edge, y);
+      const y = COIN_FIELD.cellH * i;
+      this.grid.moveTo(0, y).lineTo(width, y);
     }
-    this.grid.stroke({ color: 0x3a2b4a, width: 2, alpha: 0.55 });
+    this.grid.stroke({ color: 0x3a2b4a, width: 2, alpha: 0.6 });
 
-    this.respinsText = label('', 30, COLOR.gold);
+    // Монеты обрезаются рамкой поля: они прилетают сверху, из-за его края,
+    // и без маски видно, как они летят по комнате и по счётчику респинов.
+    const clip = new Graphics().rect(0, 0, width, height).fill(0xffffff);
+    this.coins.mask = clip;
+
+    this.view.addChild(backdrop, this.grid, this.locked, this.coins, clip);
+
+    this.respinsText = label('', 28, COLOR.gold);
     this.respinsText.anchor.set(0.5, 1);
-    this.respinsText.position.set(COIN_FIELD.size / 2, -10);
+    this.respinsText.position.set(width / 2, -8);
     this.view.addChild(this.respinsText);
 
     this.totalText = label('', 34, COLOR.paper);
     this.totalText.anchor.set(0.5, 0);
-    this.totalText.position.set(COIN_FIELD.size / 2, COIN_FIELD.size + 8);
+    this.totalText.position.set(width / 2, height + 6);
     this.view.addChild(this.totalText);
   }
 
@@ -103,8 +109,8 @@ export class CoinField {
     const col = index % COIN_COLS;
     const row = Math.floor(index / COIN_COLS);
     return {
-      x: COIN_FIELD.edge + COIN_FIELD.cell * (col + 0.5),
-      y: COIN_FIELD.edge + COIN_FIELD.cell * (row + 0.5),
+      x: COIN_FIELD.cellW * (col + 0.5),
+      y: COIN_FIELD.cellH * (row + 0.5),
     };
   }
 
@@ -113,10 +119,10 @@ export class CoinField {
     this.locked.clear();
     if (this.rows >= COIN_ROWS_MAX) return;
 
-    const top = COIN_FIELD.edge + COIN_FIELD.cell * this.rows;
+    const top = COIN_FIELD.cellH * this.rows;
     this.locked
-      .rect(COIN_FIELD.edge, top, COIN_FIELD.cell * COIN_COLS, COIN_FIELD.size - COIN_FIELD.edge - top)
-      .fill({ color: 0x05030a, alpha: 0.72 });
+      .rect(0, top, COIN_FIELD.cellW * COIN_COLS, COIN_FIELD.cellH * COIN_ROWS_MAX - top)
+      .fill({ color: 0x05030a, alpha: 0.78 });
   }
 
   private textureFor(drop: CoinDrop): Texture {
@@ -126,70 +132,68 @@ export class CoinField {
       case 'pump':
         return this.art.pump;
       case 'mult':
-        return this.art.wild;
+        return this.art.mult;
       default:
-        return this.art.coin;
+        return this.art[drop.coin.tier];
     }
   }
 
-  /** Кладёт монету в клетку с прыжком: она падает, а не проявляется. */
-  private putCoin(drop: CoinDrop, betCoins: number): void {
+  /** Подпись на монете: номинал у обычных, у особых он нарисован. */
+  private captionFor(drop: CoinDrop): string {
+    if (drop.coin.kind === 'mult' || drop.coin.kind === 'pump') return '';
+    return `×${Math.round(drop.coin.value)}`;
+  }
+
+  /**
+   * Роняет монету в клетку.
+   *
+   * Монета не появляется на месте, а падает сверху — так же, как символы
+   * на барабанах, только дольше. Лететь ей нужно именно долго: весь смысл
+   * респина в том, упадёт монета или нет, и мгновенное появление съедает
+   * это ожидание целиком.
+   */
+  private dropCoin(drop: CoinDrop): Promise<void> {
     const at = this.cellAt(drop.index);
     const slot = new Container();
-    slot.position.set(at.x, at.y);
+    slot.position.set(at.x, -COIN_FIELD.cellH);
 
-    const size = COIN_FIELD.cell - 16;
-
-    // Ступень показывает кольцо под монетой, а не её собственный цвет.
-    // Красить сам спрайт нельзя: он золотой, а tint в Pixi умножает —
-    // «серебро» и «алмаз» выходили болотно-зелёными. Кольцо же читается
-    // сразу и не портит рисунок монеты.
-    if (drop.coin.kind === 'coin') {
-      const ring = new Graphics()
-        .circle(0, 0, size * 0.46)
-        .fill({ color: TIER_COLOR[drop.coin.tier], alpha: 0.95 })
-        .circle(0, 0, size * 0.46)
-        .stroke({ color: 0x120a18, width: 3, alpha: 0.8 });
-      slot.addChild(ring);
-    }
-
+    const size = Math.min(COIN_FIELD.cellW, COIN_FIELD.cellH) - 12;
     const sprite = new Sprite(this.textureFor(drop));
     sprite.anchor.set(0.5);
-    sprite.width = drop.coin.kind === 'coin' ? size * 0.78 : size;
-    sprite.height = drop.coin.kind === 'coin' ? size * 0.78 : size;
+    sprite.width = size;
+    sprite.height = size;
     slot.addChild(sprite);
 
-    // Подпись: номинал в монетах у обычных, роль — у особых.
-    const caption =
-      drop.coin.kind === 'mult'
-        ? `×${drop.coin.mult}`
-        : drop.coin.kind === 'pump'
-          ? '+'
-          : drop.coin.kind === 'collector'
-            ? Math.round(drop.coin.value * betCoins).toLocaleString('ru-RU')
-            : Math.round(drop.coin.value * betCoins).toLocaleString('ru-RU');
-
-    const value = label(caption, drop.coin.kind === 'coin' ? 20 : 22, COLOR.ink);
+    const value = label(this.captionFor(drop), 30, 0xfff3d6, {
+      stroke: { color: 0x1a0f06, width: 5 },
+    });
     value.anchor.set(0.5);
-    value.position.set(0, size * 0.28);
-    // Тёмная подложка под числом: на светлом металле монеты чёрные цифры
-    // сливаются с бликами, а обводкой Pixi текст не обводит.
-    const plate = new Graphics()
-      .roundRect(-value.width / 2 - 6, value.y - value.height / 2 - 2, value.width + 12, value.height + 4, 6)
-      .fill({ color: 0xf6e7c8, alpha: 0.92 });
-    slot.addChild(plate, value);
+    slot.addChild(value);
 
     this.coins.addChild(slot);
     this.slots[drop.index] = { view: slot, value, amount: drop.coin.value };
 
-    slot.scale.set(0.2);
-    slot.alpha = 0;
-    gsap.to(slot, { alpha: 1, duration: dur(0.12) });
-    gsap.to(slot.scale, { x: 1, y: 1, duration: dur(0.26), ease: 'back.out(2.2)' });
+    return new Promise((resolve) => {
+      gsap.to(slot, {
+        y: at.y,
+        duration: dur(FALL_TIME),
+        // Ускорение к концу: монета падает, а не опускается.
+        ease: 'power2.in',
+        onComplete: () => {
+          // Удар о клетку: короткое приседание и обратно.
+          gsap.fromTo(
+            slot.scale,
+            { x: 1.16, y: 0.84 },
+            { x: 1, y: 1, duration: dur(0.22), ease: 'back.out(3)' },
+          );
+          resolve();
+        },
+      });
+    });
   }
 
   /** Начало бонуса: пустое поле, стартовые монеты, полный счётчик. */
-  async start(rows: number, drops: CoinDrop[], betCoins: number): Promise<void> {
+  async start(rows: number, drops: CoinDrop[]): Promise<void> {
     this.coins.removeChildren();
     this.slots.fill(null);
     this.rows = rows;
@@ -200,27 +204,23 @@ export class CoinField {
     this.view.alpha = 0;
     gsap.to(this.view, { alpha: 1, duration: dur(0.3) });
 
-    await this.drop(drops, rows, betCoins);
+    await this.drop(drops, rows);
   }
 
-  /** Респин: монеты падают по очереди, потом открываются новые ряды. */
-  async drop(drops: CoinDrop[], rows: number, betCoins: number): Promise<void> {
+  /** Респин: монеты сыплются одна за другой, потом открываются новые ряды. */
+  async drop(drops: CoinDrop[], rows: number): Promise<void> {
+    const falling: Promise<void>[] = [];
     for (const d of drops) {
-      this.putCoin(d, betCoins);
-      await pause(DROP_STEP);
+      falling.push(this.dropCoin(d));
+      await pause(FALL_STAGGER);
     }
+    await Promise.all(falling);
 
     if (rows !== this.rows) {
       this.rows = rows;
       this.drawLocked();
-      // Открытие ряда — событие: поле мигает по новой кромке.
       const flash = new Graphics()
-        .rect(
-          COIN_FIELD.edge,
-          COIN_FIELD.edge + COIN_FIELD.cell * (rows - 1),
-          COIN_FIELD.cell * COIN_COLS,
-          COIN_FIELD.cell,
-        )
+        .rect(0, COIN_FIELD.cellH * (rows - 1), COIN_FIELD.cellW * COIN_COLS, COIN_FIELD.cellH)
         .fill({ color: COLOR.gold, alpha: 0.35 });
       this.view.addChild(flash);
       await new Promise<void>((resolve) => {
@@ -237,12 +237,12 @@ export class CoinField {
   }
 
   /** Качок подкачал монету: число подрастает на месте. */
-  async pump(ticks: PumpTick[], betCoins: number): Promise<void> {
+  async pump(ticks: PumpTick[]): Promise<void> {
     for (const tick of ticks) {
       const slot = this.slots[tick.index];
       if (!slot) continue;
       slot.amount += tick.add;
-      slot.value.text = Math.round(slot.amount * betCoins).toLocaleString('ru-RU');
+      slot.value.text = `×${Math.round(slot.amount)}`;
       gsap.fromTo(
         slot.view.scale,
         { x: 1, y: 1 },
@@ -253,17 +253,13 @@ export class CoinField {
   }
 
   setRespins(left: number): void {
-    this.respinsText.text = left > 0 ? `РЕСПИНОВ ${left}` : 'ПОСЛЕДНИЙ ШАНС';
+    this.respinsText.text = left > 0 ? `РЕСПИНЫ: ${left}` : 'ПОСЛЕДНИЙ ШАНС';
   }
 
   /** Итог: сумма поля, множитель и, если повезло, полное поле. */
   async finish(total: number, mult: number, filled: boolean, betCoins: number): Promise<void> {
     const coins = Math.round(total * betCoins).toLocaleString('ru-RU');
-    this.totalText.text = filled
-      ? `ВСЁ ПОЛЕ! ${coins}`
-      : mult > 1
-        ? `${coins}  (×${mult})`
-        : coins;
+    this.totalText.text = filled ? `ВСЁ ПОЛЕ! ${coins}` : mult > 1 ? `${coins}  (×${mult})` : coins;
     gsap.fromTo(
       this.totalText.scale,
       { x: 0.7, y: 0.7 },

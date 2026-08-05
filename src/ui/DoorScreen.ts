@@ -1,82 +1,41 @@
 import gsap from 'gsap';
-import { Container, Graphics, Rectangle } from 'pixi.js';
-import { COIN_CELLS, COIN_RESPINS, COIN_VALUES } from '../core/features/coinRush';
-import { DOORS } from '../core/features/freeSpins';
+import { Container, Graphics, Rectangle, Sprite, type Texture } from 'pixi.js';
 import type { BonusId } from '../core/round';
-import { COLOR } from '../game/palette';
+import { CHOICE_SCREEN } from '../game/layout';
 import { dur } from '../game/timing';
-import { Button, label } from './widgets';
+import { HotZone } from './HotZone';
 
 /**
  * Выбор бонуса перед входом в подземелье.
  *
- * Единственный момент за всю игру, когда игрок на что-то влияет. Обе двери
+ * Единственный момент за всю игру, когда игрок на что-то влияет. Оба бонуса
  * сведены к близкому матожиданию симулятором (см. MATH.md), поэтому правильного
- * ответа нет — выбор про темперамент. Экран обязан это доносить: рядом с каждой
- * дверью написано, чем она отличается, и нигде не сказано, какая «лучше».
+ * ответа нет — выбор про темперамент. Экран это и говорит прямо: «ни один
+ * не лучше — они просто разные».
  *
- * Дверей было три, и все три вели во фриспины с разной длиной раунда. Замеры
- * показали разброс матожидания в четыре процентных пункта, то есть выбор был
- * не про темперамент, а про арифметику. Теперь их две, и они противоположны
- * по устройству: множитель против накопления.
+ * Сам экран — готовая картинка из набора. Живых значений на нём нет: и число
+ * спинов, и стартовый множитель, и размер поля — постоянные. Чтобы картинка
+ * не разошлась с моделью молча, её числа закреплены `rulesArt.test.ts`.
  */
 
-const CARD_W = 320;
-const CARD_H = 340;
-const GAP = 48;
-
-/** Крупнейший номинал монеты — на карточке он обещание, а не мелкий шрифт. */
-const TOP_COIN = COIN_VALUES.reduce((m, c) => Math.max(m, c.value), 0);
-
-interface BonusCard {
-  id: BonusId;
-  title: string;
-  subtitle: string;
-  /** Крупное число в середине карточки и подпись под ним. */
-  big: string;
-  bigCap: string;
-  /** Строка про главную ручку бонуса. */
-  line: string;
-  hint: string;
-  color: number;
-}
-
-function cards(): BonusCard[] {
-  const door = DOORS[0];
-  return [
-    {
-      id: door.id,
-      title: door.title,
-      subtitle: 'Всё или ничего',
-      big: String(door.spins),
-      bigCap: 'СПИНОВ',
-      line: `старт ×${door.startMult}`,
-      hint: 'каждый ♂ даёт +1',
-      color: 0xd4453a,
-    },
-    {
-      id: 'OIL_RUSH',
-      title: 'OIL RUSH',
-      subtitle: 'Шаг за шагом',
-      big: String(COIN_CELLS),
-      bigCap: 'КЛЕТОК',
-      line: `монеты до ×${TOP_COIN}`,
-      hint: `новая монета — снова ${COIN_RESPINS} респина`,
-      color: COLOR.cyan,
-    },
-  ];
-}
+/** Карточки и кнопка отказа в координатах картинки (1536x1024). */
+const CARDS: readonly { id: BonusId; box: [number, number, number, number] }[] = [
+  { id: 'FULL_NELSON', box: [153, 195, 588, 690] },
+  { id: 'OIL_RUSH', box: [790, 195, 593, 690] },
+];
+const CANCEL_AT: [number, number, number, number] = [476, 900, 477, 92];
 
 export class DoorScreen {
   readonly view = new Container();
 
   private resolve: ((id: BonusId | null) => void) | null = null;
-  private readonly cards: Container[] = [];
-  private readonly cancelButton: Container;
-  /** Можно ли уйти с экрана без выбора. */
+  private readonly panel = new Container();
+  private readonly cancelZone: HotZone;
+  /** Заглушка поверх нарисованной кнопки «ПЕРЕДУМАЛ», когда отказ запрещён. */
+  private readonly cancelOff = new Graphics();
   private cancellable = false;
 
-  constructor(width: number, height: number) {
+  constructor(width: number, height: number, art: Texture) {
     this.view.visible = false;
 
     const shade = new Graphics();
@@ -85,41 +44,39 @@ export class DoorScreen {
     // Без hit-области клики проваливаются на панель управления под экраном.
     shade.hitArea = new Rectangle(0, 0, width, height);
     shade.on('pointertap', () => this.cancel());
-    this.view.addChild(shade);
+    this.view.addChild(shade, this.panel);
 
-    const title = label('ВЫБЕРИ БОНУС', 46, COLOR.gold);
-    title.anchor.set(0.5, 0);
-    title.position.set(width / 2, 92);
-    this.view.addChild(title);
+    this.panel.position.set(CHOICE_SCREEN.x, CHOICE_SCREEN.y);
 
-    const sub = label('Два пути в подземелье. Ни один не лучше — они просто разные.', 19, 0x9a8aaa);
-    sub.anchor.set(0.5, 0);
-    sub.position.set(width / 2, 148);
-    this.view.addChild(sub);
+    const backdrop = new Sprite(art);
+    backdrop.width = CHOICE_SCREEN.w;
+    backdrop.height = CHOICE_SCREEN.h;
+    backdrop.eventMode = 'static';
+    this.panel.addChild(backdrop);
 
-    const list = cards();
-    const totalW = list.length * CARD_W + (list.length - 1) * GAP;
-    const startX = (width - totalW) / 2;
+    const k = CHOICE_SCREEN.w / art.width;
+    const at = (box: [number, number, number, number]): [number, number, number, number] => [
+      box[0] * k,
+      box[1] * k,
+      box[2] * k,
+      box[3] * k,
+    ];
 
-    for (const [i, door] of list.entries()) {
-      const card = this.buildCard(door);
-      card.position.set(startX + i * (CARD_W + GAP), 210);
-      this.cards.push(card);
-      this.view.addChild(card);
+    for (const card of CARDS) {
+      const zone = new HotZone(
+        at(card.box),
+        () => this.pick(card.id),
+        card.id === 'OIL_RUSH' ? 0x35e0d8 : 0xc74be8,
+      );
+      this.panel.addChild(zone.view);
     }
 
-    // Отказ доступен только при покупке бонуса: там игрок ещё ничего не потратил.
-    // Когда дверь выпала по scatter'ам, раунд уже оплачен обычной ставкой,
-    // и уйти с экрана значило бы просто потерять его.
-    this.cancelButton = new Button({
-      text: 'ПЕРЕДУМАЛ',
-      width: 240,
-      height: 54,
-      fontSize: 21,
-      onTap: () => this.cancel(),
-    }).view;
-    this.cancelButton.position.set((width - 240) / 2, 210 + CARD_H + 46);
-    this.view.addChild(this.cancelButton);
+    const [cx, cy, cw, ch] = at(CANCEL_AT);
+    this.cancelOff.roundRect(cx, cy, cw, ch, 10).fill({ color: 0x0a0510, alpha: 0.78 });
+    this.panel.addChild(this.cancelOff);
+
+    this.cancelZone = new HotZone(at(CANCEL_AT), () => this.cancel());
+    this.panel.addChild(this.cancelZone.view);
   }
 
   private cancel(): void {
@@ -133,72 +90,6 @@ export class DoorScreen {
   /** Закрыть по Escape — работает только там, где отказ вообще разрешён. */
   requestClose(): void {
     this.cancel();
-  }
-
-  private buildCard(door: BonusCard): Container {
-    const card = new Container();
-    const accent = door.color;
-
-    const bg = new Graphics();
-    bg.roundRect(0, 0, CARD_W, CARD_H, 16).fill(COLOR.dim);
-    bg.roundRect(0, 0, CARD_W, CARD_H, 16).stroke({ color: accent, width: 5 });
-    card.addChild(bg);
-
-    const name = label(door.title, 30, accent);
-    name.anchor.set(0.5, 0);
-    name.position.set(CARD_W / 2, 28);
-    card.addChild(name);
-
-    const mood = label(door.subtitle, 17, 0x9a8aaa);
-    mood.anchor.set(0.5, 0);
-    mood.position.set(CARD_W / 2, 66);
-    card.addChild(mood);
-
-    const spins = label(door.big, 76, COLOR.paper);
-    spins.anchor.set(0.5, 0);
-    spins.position.set(CARD_W / 2, 108);
-    card.addChild(spins);
-
-    const spinsCap = label(door.bigCap, 17, 0x9a8aaa);
-    spinsCap.anchor.set(0.5, 0);
-    spinsCap.position.set(CARD_W / 2, 196);
-    card.addChild(spinsCap);
-
-    const mult = label(door.line, 30, COLOR.gold);
-    mult.anchor.set(0.5, 0);
-    mult.position.set(CARD_W / 2, 230);
-    card.addChild(mult);
-
-    const hint = label(door.hint, 16, 0x9a8aaa);
-    hint.anchor.set(0.5, 0);
-    hint.position.set(CARD_W / 2, 272);
-    card.addChild(hint);
-
-    const pick = new Graphics();
-    pick.roundRect(24, 296, CARD_W - 48, 30, 8).fill(accent);
-    card.addChild(pick);
-
-    const pickText = label('ВЫБРАТЬ', 19, COLOR.ink);
-    pickText.anchor.set(0.5);
-    pickText.position.set(CARD_W / 2, 311);
-    card.addChild(pickText);
-
-    // Точка отсчёта — центр карточки, иначе при наведении она уползает вправо вниз.
-    card.pivot.set(CARD_W / 2, CARD_H / 2);
-    card.position.set(CARD_W / 2, CARD_H / 2);
-
-    // События висят на обёртке, а не на самой карточке: сдвинутый pivot ломает
-    // попадание в hitArea, и клики просто не доходят. Обёртка стоит без сдвигов,
-    // поэтому её прямоугольник совпадает с тем, что видит игрок.
-    const holder = new Container();
-    holder.addChild(card);
-    holder.eventMode = 'static';
-    holder.cursor = 'pointer';
-    holder.hitArea = new Rectangle(0, 0, CARD_W, CARD_H);
-    holder.on('pointerover', () => gsap.to(card.scale, { x: 1.04, y: 1.04, duration: dur(0.16) }));
-    holder.on('pointerout', () => gsap.to(card.scale, { x: 1, y: 1, duration: dur(0.16) }));
-    holder.on('pointertap', () => this.pick(door.id));
-    return holder;
   }
 
   private pick(id: BonusId): void {
@@ -217,25 +108,21 @@ export class DoorScreen {
    * @param cancellable разрешён ли отказ. При покупке бонуса — да: игрок ещё
    *        ничего не потратил. Когда дверь выпала по scatter'ам — нет: раунд
    *        уже оплачен ставкой, и уход с экрана означал бы потерю денег.
-   * @returns выбранная дверь либо null, если игрок передумал.
+   * @returns выбранный бонус либо null, если игрок передумал.
    */
   choose(cancellable = false): Promise<BonusId | null> {
     this.cancellable = cancellable;
-    this.cancelButton.visible = cancellable;
+    // Кнопка нарисована на картинке всегда, поэтому запрещённый отказ
+    // не прячется, а гасится: видно, что кнопка есть, но сейчас не её черёд.
+    this.cancelOff.visible = !cancellable;
+    this.cancelZone.view.visible = cancellable;
     this.view.visible = true;
-    for (const [i, holder] of this.cards.entries()) {
-      const card = holder.children[0] as Container;
-      card.scale.set(0.86);
-      card.alpha = 0;
-      gsap.to(card, { alpha: 1, duration: dur(0.24), delay: dur(0.07 * i) });
-      gsap.to(card.scale, {
-        x: 1,
-        y: 1,
-        duration: dur(0.34),
-        delay: dur(0.07 * i),
-        ease: 'back.out(2)',
-      });
-    }
+
+    this.panel.alpha = 0;
+    this.panel.scale.set(0.94);
+    gsap.to(this.panel, { alpha: 1, duration: dur(0.26) });
+    gsap.to(this.panel.scale, { x: 1, y: 1, duration: dur(0.34), ease: 'back.out(1.8)' });
+
     return new Promise((resolve) => {
       this.resolve = resolve;
     });

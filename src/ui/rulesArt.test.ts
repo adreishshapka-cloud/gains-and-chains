@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { COIN_COLS, COIN_RESPINS, COIN_ROWS_MAX } from '../core/features/coinRush';
+import {
+  COIN_COLS,
+  COIN_RESPINS,
+  COIN_ROWS_MAX,
+  COIN_VALUES,
+} from '../core/features/coinRush';
 import { BONUS_BUY_COST, DOORS } from '../core/features/freeSpins';
 import { PAYTABLE, SCATTER_PAY, SCATTER_TRIGGER } from '../core/paytable';
 import { LINES, MAX_WIN_X, STICKY_MULT_LADDER, Sym } from '../core/types';
 import { AUTO_ROUNDS, RTP_LABEL } from '../game/rules';
+import { TOP_UP_OPTIONS } from './TopUpScreen';
 
 /**
  * Сторож правил.
@@ -84,5 +90,24 @@ describe('числа, нарисованные на экране правил', 
 describe('числа, нарисованные на экране настроек', () => {
   it('сколько раундов крутит автоспин', () => {
     expect(AUTO_ROUNDS).toBe(25);
+  });
+});
+
+describe('числа, нарисованные на экране выбора бонуса', () => {
+  it('карточка FULL NELSON', () => {
+    expect([DOORS[0].spins, DOORS[0].startMult]).toEqual([5, 17]);
+  });
+
+  it('карточка OIL RUSH', () => {
+    expect(COIN_COLS * COIN_ROWS_MAX).toBe(25);
+    expect(COIN_RESPINS).toBe(3);
+    // «монеты до ×500» — крупнейший номинал на карточке.
+    expect(Math.max(...COIN_VALUES.map((c) => c.value))).toBe(500);
+  });
+});
+
+describe('числа, нарисованные на экране пополнения', () => {
+  it('три порции монет', () => {
+    expect(TOP_UP_OPTIONS.map((o) => o.coins)).toEqual([5_000, 20_000, 100_000]);
   });
 });
