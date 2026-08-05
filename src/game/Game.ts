@@ -11,6 +11,7 @@ import {
 import type { BeltReward } from '../core/features/beltCollection';
 import { BONUS_BUY_COST, DOORS } from '../core/features/freeSpins';
 import type { RoundEvent } from '../core/events';
+import { COIN_ROWS_START } from '../core/features/coinRush';
 import { REELS_BASE, REELS_FREE } from '../core/reels';
 import {
   createGameState,
@@ -88,6 +89,7 @@ import {
   STEPPER_PANEL,
   OIL_BAR,
   OIL_PANEL,
+  REELS_FRAME,
   PANEL_TOP,
   REELS_AT,
   SIGN_AT,
@@ -396,6 +398,15 @@ export class Game {
     this.floorLine = new Sprite(this.rooms.main.floor);
     this.floorLine.position.set(0, PANEL_TOP);
     this.app.stage.addChild(this.floorLine);
+
+    // Деревянная рамка вокруг окна закрывается тёмной плитой: на макете она
+    // обводит поле коричневым кантом с заклёпками и тянет взгляд на себя,
+    // а смотреть надо на символы. Плита кладётся ПОД барабаны и под поле
+    // монет, поэтому обеим играм достаётся ровный тёмный прямоугольник.
+    const frameCover = new Graphics()
+      .rect(REELS_FRAME.x, REELS_FRAME.y, REELS_FRAME.w, REELS_FRAME.h)
+      .fill(0x0a0710);
+    this.app.stage.addChild(frameCover);
 
     this.reels = new ReelSet(art.textures, REELS_BASE);
     this.reels.onReelStop = () => sound.reelStop();
@@ -934,6 +945,14 @@ export class Game {
       // бонусную. Подмена под затемнением, в открытом кадре её не бывает.
       await this.entrance.enter();
       this.setRoom('bonus');
+      // Поле бонуса готовится ЗДЕСЬ, пока экран ещё чёрный: барабаны уходят,
+      // на их месте встаёт пустое поле монет. Если делать это после шторки,
+      // поле проявляется поверх барабанов, и сквозь него на мгновение видно
+      // и символы, и нарисованную в рамке таблицу выплат.
+      if (door === 'OIL_RUSH') {
+        this.reels.view.visible = false;
+        this.coinField.prepare(COIN_ROWS_START);
+      }
       await this.entrance.reveal();
 
       const bonusLog: RoundEvent[] = [];
@@ -951,7 +970,13 @@ export class Game {
       await this.playLog(bonusLog);
 
       // Обратно — просто затемнением: из подземелья выходят не через дверь.
-      await this.entrance.swap(() => this.setRoom('main'));
+      // Поле монет убирается там же, под шторкой, и барабаны возвращаются
+      // на своё место незаметно.
+      await this.entrance.swap(() => {
+        this.coinField.hide();
+        this.reels.view.visible = true;
+        this.setRoom('main');
+      });
     }
 
     const result = finishRound(parts, {
@@ -1059,9 +1084,8 @@ export class Game {
 
         // ── OIL RUSH ────────────────────────────────────────────
         case 'coinStart': {
-          // Барабаны уходят целиком: на их месте другая игра, и оставленная
-          // под монетами сетка символов читалась бы вторым полем.
-          this.reels.view.visible = false;
+          // Поле и барабаны переключены раньше, под чёрной шторкой входа
+          // (см. spin). Здесь остаётся только уронить стартовые монеты.
           this.setStatus('OIL RUSH — монеты держатся до конца');
           await this.coinField.start(ev.rows, ev.drops);
           break;
@@ -1077,8 +1101,6 @@ export class Game {
 
         case 'coinEnd': {
           await this.coinField.finish(ev.total, ev.mult, ev.filled, this.betCoins);
-          await this.coinField.hide();
-          this.reels.view.visible = true;
           await this.bigWin.show(
             ev.filled ? 'ВСЁ ПОЛЕ' : 'OIL RUSH',
             Math.round(ev.total * this.betCoins),

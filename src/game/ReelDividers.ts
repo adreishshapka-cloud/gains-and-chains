@@ -31,13 +31,34 @@ const ALPHA = 0.55;
 /** Отступ строчки от края поля: вплотную она сливается с нарисованной рамкой. */
 const INSET = 3;
 
+export interface DividerGrid {
+  cols: number;
+  rows: number;
+  cellW: number;
+  cellH: number;
+}
+
+/** Разметка поля барабанов: пять колонок по четыре ряда, клетка квадратная. */
+const REEL_GRID: DividerGrid = {
+  cols: REELS,
+  rows: ROWS,
+  cellW: REELS_AT.cell,
+  cellH: REELS_AT.cell,
+};
+
 export class ReelDividers {
   readonly view = new Container();
 
-  constructor() {
-    const cell = REELS_AT.cell;
-    const w = REELS * cell;
-    const h = ROWS * cell;
+  /**
+   * @param grid какое поле размечать. По умолчанию барабанное; монетный бонус
+   *        передаёт своё — 5×5 с невысокой клеткой. Строчка у обоих одна и та
+   *        же намеренно: это одна и та же машина, и поле бонуса должно читаться
+   *        её полем, а не отдельным экраном.
+   */
+  constructor(grid: DividerGrid = REEL_GRID) {
+    const { cols, rows, cellW, cellH } = grid;
+    const w = cols * cellW;
+    const h = rows * cellH;
     const g = new Graphics();
 
     const dashRow = (y: number, from: number, to: number) => {
@@ -52,8 +73,8 @@ export class ReelDividers {
     };
 
     // Внутренние границы ячеек.
-    for (let seam = 1; seam < REELS; seam++) dashColumn(seam * cell, INSET, h - INSET);
-    for (let row = 1; row < ROWS; row++) dashRow(row * cell, INSET, w - INSET);
+    for (let seam = 1; seam < cols; seam++) dashColumn(seam * cellW, INSET, h - INSET);
+    for (let row = 1; row < rows; row++) dashRow(row * cellH, INSET, w - INSET);
 
     // Внешняя рамка поля — той же строчкой, иначе крайние ячейки выглядят
     // незакрытыми, а на образце из набора обшито всё поле целиком.

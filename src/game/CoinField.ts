@@ -10,6 +10,7 @@ import {
 import { label } from '../ui/widgets';
 import { COIN_FIELD } from './layout';
 import { COLOR } from './palette';
+import { ReelDividers } from './ReelDividers';
 import { dur, pause } from './timing';
 
 /**
@@ -29,10 +30,18 @@ import { dur, pause } from './timing';
  * от ставки, и зашитое в картинку число начало бы врать при её смене.
  */
 
-/** Сколько монета летит до своей клетки. */
-const FALL_TIME = 0.72;
-/** Задержка между монетами одного респина: они сыплются, а не появляются разом. */
-const FALL_STAGGER = 150;
+/**
+ * Сколько монета летит до своей клетки.
+ *
+ * Долго и с торможением: монета проносится вниз, замедляется и только в конце
+ * встаёт. Быстрое падение пробовали, и оно съедает весь смысл респина — весь
+ * он в том, упадёт монета или нет, и на четверти секунды переживать нечего.
+ */
+const FALL_TIME = 1.15;
+/** Пауза между монетами ОДНОЙ колонки. */
+const FALL_STAGGER = 260;
+/** Пауза между колонками: они отрабатывают слева направо, как барабаны. */
+const COLUMN_STAGGER = 340;
 
 interface Slot {
   view: Container;
@@ -54,7 +63,6 @@ export interface CoinArt {
 export class CoinField {
   readonly view = new Container();
 
-  private readonly grid = new Graphics();
   private readonly locked = new Graphics();
   private readonly coins = new Container();
   private readonly slots: (Slot | null)[] = new Array(COIN_COLS * COIN_ROWS_MAX).fill(null);
@@ -74,24 +82,23 @@ export class CoinField {
     // в пустых клетках.
     const backdrop = new Graphics().rect(0, 0, width, height).fill(0x0a0710);
 
-    // Разметка клеток — тонкая, как у барабанов: она размечает поле,
-    // а не рисует решётку поверх игры.
-    for (let i = 1; i < COIN_COLS; i++) {
-      const x = COIN_FIELD.cellW * i;
-      this.grid.moveTo(x, 0).lineTo(x, height);
-    }
-    for (let i = 1; i < COIN_ROWS_MAX; i++) {
-      const y = COIN_FIELD.cellH * i;
-      this.grid.moveTo(0, y).lineTo(width, y);
-    }
-    this.grid.stroke({ color: 0x3a2b4a, width: 2, alpha: 0.6 });
+    // Разметка — ТА ЖЕ, что у барабанов: пунктирная строчка по границам ячеек.
+    // Своя, нарисованная сплошными линиями, пробовалась и оказалась чужой:
+    // бонус играет в том же окне той же машины, и поле у него должно быть
+    // её полем, а не отдельным экраном со своим стилем.
+    const stitching = new ReelDividers({
+      cols: COIN_COLS,
+      rows: COIN_ROWS_MAX,
+      cellW: COIN_FIELD.cellW,
+      cellH: COIN_FIELD.cellH,
+    });
 
     // Монеты обрезаются рамкой поля: они прилетают сверху, из-за его края,
     // и без маски видно, как они летят по комнате и по счётчику респинов.
     const clip = new Graphics().rect(0, 0, width, height).fill(0xffffff);
     this.coins.mask = clip;
 
-    this.view.addChild(backdrop, this.grid, this.locked, this.coins, clip);
+    this.view.addChild(backdrop, stitching.view, this.locked, this.coins, clip);
 
     this.respinsText = label('', 28, COLOR.gold);
     this.respinsText.anchor.set(0.5, 1);
@@ -147,15 +154,18 @@ export class CoinField {
   /**
    * Роняет монету в клетку.
    *
-   * Монета не появляется на месте, а падает сверху — так же, как символы
-   * на барабанах, только дольше. Лететь ей нужно именно долго: весь смысл
-   * респина в том, упадёт монета или нет, и мгновенное появление съедает
-   * это ожидание целиком.
+   * Монета не появляется на месте, а проносится сверху через всё поле —
+   * как символ на барабане. Ход именно тормозящий: сперва быстро, потом всё
+   * медленнее, и только в конце она садится в клетку. Разгон к концу
+   * (как падает камень) пробовали — так монета проскакивает мимо внимания,
+   * а тут наоборот, к моменту остановки на неё уже смотрят.
    */
   private dropCoin(drop: CoinDrop): Promise<void> {
     const at = this.cellAt(drop.index);
     const slot = new Container();
-    slot.position.set(at.x, -COIN_FIELD.cellH);
+    // Старт выше поля на два ряда: монете нужно место, чтобы разогнаться
+    // до того, как её станет видно из-под маски.
+    slot.position.set(at.x, -COIN_FIELD.cellH * 2);
 
     const size = Math.min(COIN_FIELD.cellW, COIN_FIELD.cellH) - 12;
     const sprite = new Sprite(this.textureFor(drop));
@@ -177,8 +187,8 @@ export class CoinField {
       gsap.to(slot, {
         y: at.y,
         duration: dur(FALL_TIME),
-        // Ускорение к концу: монета падает, а не опускается.
-        ease: 'power2.in',
+        // Торможение к концу: пролетела, замедлилась, встала.
+        ease: 'power3.out',
         onComplete: () => {
           // Удар о клетку: короткое приседание и обратно.
           gsap.fromTo(
@@ -200,21 +210,53 @@ export class CoinField {
     this.drawLocked();
     this.setRespins(COIN_RESPINS);
     this.totalText.text = '';
-    this.view.visible = true;
-    this.view.alpha = 0;
-    gsap.to(this.view, { alpha: 1, duration: dur(0.3) });
 
     await this.drop(drops, rows);
   }
 
-  /** Респин: монеты сыплются одна за другой, потом открываются новые ряды. */
+  /**
+   * Готовит пустое поле ДО того, как игрок его увидит.
+   *
+   * Зовётся под чёрной шторкой сцены входа: барабаны к этому моменту уже
+   * спрятаны, и когда шторка поднимается, на их месте сразу стоит поле бонуса.
+   * Раньше поле проявлялось поверх барабанов, и в эти триста миллисекунд
+   * сквозь него просвечивала нарисованная в рамке таблица выплат.
+   */
+  prepare(rows: number): void {
+    this.coins.removeChildren();
+    this.slots.fill(null);
+    this.rows = rows;
+    this.drawLocked();
+    this.setRespins(COIN_RESPINS);
+    this.totalText.text = '';
+    this.view.alpha = 1;
+    this.view.visible = true;
+  }
+
+  /**
+   * Респин: монеты идут КОЛОНКАМИ, слева направо, по одной.
+   *
+   * Так же, как останавливаются барабаны, и по той же причине: когда всё поле
+   * осыпается разом, смотреть не на что — событие кончается раньше, чем его
+   * успевают заметить. По колонке за раз игрок успевает и увидеть каждую
+   * монету, и подождать следующую.
+   */
   async drop(drops: CoinDrop[], rows: number): Promise<void> {
-    const falling: Promise<void>[] = [];
+    const byColumn = new Map<number, CoinDrop[]>();
     for (const d of drops) {
-      falling.push(this.dropCoin(d));
-      await pause(FALL_STAGGER);
+      const col = d.index % COIN_COLS;
+      const list = byColumn.get(col);
+      if (list) list.push(d);
+      else byColumn.set(col, [d]);
     }
-    await Promise.all(falling);
+
+    for (const col of [...byColumn.keys()].sort((a, b) => a - b)) {
+      for (const d of byColumn.get(col)!) {
+        await this.dropCoin(d);
+        await pause(FALL_STAGGER);
+      }
+      await pause(COLUMN_STAGGER);
+    }
 
     if (rows !== this.rows) {
       this.rows = rows;
@@ -268,16 +310,10 @@ export class CoinField {
     await pause(1600);
   }
 
-  async hide(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      gsap.to(this.view, {
-        alpha: 0,
-        duration: dur(0.3),
-        onComplete: () => {
-          this.view.visible = false;
-          resolve();
-        },
-      });
-    });
+  /** Убирает поле. Как и появление, происходит под шторкой — без проявлений. */
+  hide(): void {
+    this.view.visible = false;
+    this.coins.removeChildren();
+    this.slots.fill(null);
   }
 }
